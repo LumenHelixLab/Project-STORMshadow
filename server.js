@@ -490,8 +490,12 @@ server.on('upgrade', (req, socket, _head) => {
   }
 });
 
-server.listen(PORT, () => {
-  logger.info('SemBro server started', { port: PORT, url: `http://localhost:${PORT}` });
-});
+// Only start listening when this file is the entry point, so tests can import
+// the server without binding a port.
+if (require.main === module) {
+  server.listen(PORT, () => {
+    logger.info('SemBro server started', { port: PORT, url: `http://localhost:${PORT}` });
+  });
+}
 
 module.exports = { server, clients, logger };
