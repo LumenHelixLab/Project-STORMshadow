@@ -282,6 +282,14 @@
       transition: background 0.1s;
     }
     .rx-el:hover { background: rgba(108, 99, 255, 0.22); }
+    .rx-el.focused {
+      outline: 2px solid var(--green);
+      outline-offset: 2px;
+    }
+    .rx-el.hovered {
+      background: rgba(234, 179, 8, 0.18);
+      border-color: var(--yellow);
+    }
 
     .rx-role {
       font-size: 0.58rem;
@@ -381,6 +389,12 @@
     <button class="ctrl" id="connectBtn">Connect</button>
     <button class="ctrl secondary" id="captureBtn">Capture now</button>
     <button class="ctrl secondary" id="autoBtn">Auto off</button>
+    <span class="ctrl-label">Quality</span>
+    <select id="qualitySelect" style="width:90px">
+      <option value="high">High</option>
+      <option value="medium">Medium</option>
+      <option value="low">Low</option>
+    </select>
   </div>
 </header>
 
@@ -541,12 +555,20 @@
   const statPayload     = document.getElementById('statPayload');
   const statSent        = document.getElementById('statSent');
   const statReceived    = document.getElementById('statReceived');
+  const qualitySelect   = document.getElementById('qualitySelect');
 
   // Receiver-side state for incremental/delta rendering
   const rxState = {
     elements: new Map(),
     viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+    quality:  'high', // 'high' | 'medium' | 'low'
   };
+
+  function qualitySettings(q) {
+    if (q === 'low')    return { dropRoles: new Set(['section', 'article', 'complementary', 'contentinfo', 'banner']), styleText: false };
+    if (q === 'medium') return { dropRoles: new Set(), styleText: true };
+    return { dropRoles: new Set(), styleText: true };
+  }
 
   // Delay in ms between a remote activation click and the follow-up capture,
   // giving the DOM time to settle after the click handler has run.
@@ -975,6 +997,8 @@
     const stageRect = stage.getBoundingClientRect();
 
     rxState.viewport = frame.viewport;
+    const activeId = frame.surfaceMeta && frame.surfaceMeta.activeElementId;
+    const hoverId  = frame.surfaceMeta && frame.surfaceMeta.hoverElementId;
 
     if (frame.frameType === 'key') {
       rxState.elements.clear();
@@ -992,19 +1016,60 @@
     // Clear old content
     while (stage.firstChild) stage.removeChild(stage.firstChild);
 
+    // Layered canvas: background, content, interactive, media
     const canvas = document.createElement('div');
     canvas.className  = 'receiver-canvas';
     canvas.style.width     = frame.viewport.width  + 'px';
     canvas.style.height    = frame.viewport.height + 'px';
     canvas.style.transform = `scale(${scale})`;
+    canvas.style.position  = 'relative';
+
+    const backgroundLayer = document.createElement('div');
+    backgroundLayer.style.position = 'absolute';
+    backgroundLayer.style.inset = '0';
+    backgroundLayer.style.pointerEvents = 'none';
+    backgroundLayer.style.zIndex = '1';
+
+    const contentLayer = document.createElement('div');
+    contentLayer.style.position = 'absolute';
+    contentLayer.style.inset = '0';
+    contentLayer.style.pointerEvents = 'none';
+    contentLayer.style.zIndex = '2';
+
+    const interactiveLayer = document.createElement('div');
+    interactiveLayer.style.position = 'absolute';
+    interactiveLayer.style.inset = '0';
+    interactiveLayer.style.zIndex = '3';
+
+    const mediaLayer = document.createElement('div');
+    mediaLayer.style.position = 'absolute';
+    mediaLayer.style.inset = '0';
+    mediaLayer.style.zIndex = '4';
+
+    const qs = qualitySettings(rxState.quality);
 
     for (const el of rxState.elements.values()) {
+      if (qs.dropRoles.has(el.role)) continue;
+
       const node = document.createElement('div');
       node.className      = 'rx-el';
       node.style.left     = el.rect.x      + 'px';
       node.style.top      = el.rect.y      + 'px';
       node.style.width    = el.rect.width  + 'px';
       node.style.height   = el.rect.height + 'px';
+      node.style.position = 'absolute';
+
+      if (el.id === activeId) node.classList.add('focused');
+      if (el.id === hoverId)  node.classList.add('hovered');
+
+      // Apply passthrough styles when available and quality permits
+      if (qs.styleText && el.styles) {
+        node.style.color = el.styles.color || '';
+        node.style.backgroundColor = el.styles.backgroundColor || '';
+        node.style.fontSize = el.styles.fontSize || '';
+        node.style.fontFamily = el.styles.fontFamily || '';
+        node.style.fontWeight = el.styles.fontWeight || '';
+      }
 
       if (el.role === 'video' && el.media) {
         const vid     = document.createElement('video');
@@ -1017,6 +1082,7 @@
         vid.style.width  = '100%';
         vid.style.height = '100%';
         node.appendChild(vid);
+        mediaLayer.appendChild(node);
       } else if (el.role === 'audio' && el.media) {
         const aud     = document.createElement('audio');
         aud.controls  = true;
@@ -1025,6 +1091,46 @@
         if (asrc) aud.src = asrc;
         aud.style.width = '100%';
         node.appendChild(aud);
+        mediaLayer.appendChild(node);
+      } else if (el.interactive && ['button', 'link', 'checkbox', 'radio', 'textbox', 'combobox'].includes(el.role)) {
+        // Render native-looking controls for interactive elements
+        if (el.role === 'textbox' || el.role === 'combobox') {
+          const input = document.createElement(el.role === 'combobox' ? 'select' : 'input');
+          input.disabled = el.disabled;
+          input.style.width = '100%';
+          input.style.height = '100%';
+          input.style.opacity = el.disabled ? '0.5' : '1';
+          input.value = el.text || '';
+          node.appendChild(input);
+        } else if (el.role === 'checkbox' || el.role === 'radio') {
+          const input = document.createElement('input');
+          input.type = el.role;
+          input.disabled = el.disabled;
+          input.checked = el.tag === 'input' && el.checked;
+          node.appendChild(input);
+          const label = document.createElement('span');
+          label.className = 'rx-text';
+          label.textContent = ' ' + (el.text || '');
+          node.appendChild(label);
+        } else {
+          const roleSpan = document.createElement('span');
+          roleSpan.className   = 'rx-role';
+          roleSpan.textContent = el.role;
+          node.appendChild(roleSpan);
+          if (el.text) {
+            const textSpan = document.createElement('span');
+            textSpan.className   = 'rx-text';
+            textSpan.textContent = el.text.slice(0, RECEIVER_DISPLAY_MAX_LEN);
+            node.appendChild(textSpan);
+          }
+        }
+        // Remote activation — send an `activate` packet to the source
+        node.addEventListener('click', () => {
+          if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+            state.ws.send(JSON.stringify({ type: 'activate', targetId: el.id }));
+          }
+        });
+        interactiveLayer.appendChild(node);
       } else {
         const roleSpan = document.createElement('span');
         roleSpan.className   = 'rx-role';
@@ -1037,18 +1143,18 @@
           textSpan.textContent = el.text.slice(0, RECEIVER_DISPLAY_MAX_LEN);
           node.appendChild(textSpan);
         }
-      }
-
-      // Remote activation — send an `activate` packet to the source
-      node.addEventListener('click', () => {
-        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-          state.ws.send(JSON.stringify({ type: 'activate', targetId: el.id }));
+        if (el.role === 'img') {
+          node.style.backgroundSize = 'cover';
+          node.style.backgroundPosition = 'center';
         }
-      });
-
-      canvas.appendChild(node);
+        contentLayer.appendChild(node);
+      }
     }
 
+    canvas.appendChild(backgroundLayer);
+    canvas.appendChild(contentLayer);
+    canvas.appendChild(interactiveLayer);
+    canvas.appendChild(mediaLayer);
     stage.appendChild(canvas);
   }
 
@@ -1216,6 +1322,16 @@
       modeSelect.value === 'receiver' ? 'none' : '';
     // Receiver pane is always visible
   });
+
+  qualitySelect.addEventListener('change', () => {
+    rxState.quality = qualitySelect.value;
+    if (state.lastFrame) renderFrame(state.lastFrame);
+  });
+
+  // Respect reduced-motion preference: avoid animated transitions
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.documentElement.style.setProperty('--motion-duration', '0s');
+  }
 </script>
 </body>
 </html>
