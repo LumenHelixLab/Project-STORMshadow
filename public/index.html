@@ -541,9 +541,13 @@
 
   // Delay in ms between a remote activation click and the follow-up capture,
   // giving the DOM time to settle after the click handler has run.
-  const ACTIVATE_SETTLE_MS     = 80;
+  const ACTIVATE_SETTLE_MS       = 80;
   // Interval in ms for the auto-capture mode (one frame per second).
   const AUTO_CAPTURE_INTERVAL_MS = 1000;
+  // Maximum characters of element text content included in a semantic frame.
+  // Chosen to keep per-element JSON small while preserving enough context for
+  // the receiver to label interactive elements meaningfully.
+  const ELEMENT_TEXT_MAX_LEN     = 200;
 
   // ── Safe media source ──────────────────────────────────────────────────────
   /**
@@ -676,7 +680,7 @@
       const role        = roleOf(el);
       const interactive = ['button', 'link', 'checkbox', 'textbox', 'combobox'].includes(role);
       const disabled    = el.disabled === true || el.hasAttribute('disabled');
-      const text        = (el.innerText || '').trim().slice(0, 200);
+      const text        = (el.innerText || '').trim().slice(0, ELEMENT_TEXT_MAX_LEN);
       const media       = mediaMeta(el);
 
       state.current.set(id, el);
@@ -897,7 +901,9 @@
       state.ws = null;
     }
 
-    const ws = new WebSocket(`ws://${location.host}/ws`);
+    // Use wss: when the page is served over HTTPS to avoid mixed-content errors.
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${wsProtocol}//${location.host}/ws`);
     state.ws = ws;
 
     ws.addEventListener('open', () => {

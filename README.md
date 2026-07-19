@@ -42,3 +42,7 @@ The core idea: send *meaning*, not pixels.
 - The **receiver** renders absolutely-positioned native elements scaled to fit, including native `<video>` / `<audio>` players for media.
 
 See the problem-statement document for the full architecture description.
+
+## Notes
+
+- The source page fixture includes a `<video>` element that loads a sample clip from `https://www.w3schools.com/html/mov_bbb.mp4` (a well-known public test file). If that URL is unavailable in your network environment the video element will show a blank player, but the semantic capture will still work — the element and its metadata are captured regardless of whether the media has loaded.

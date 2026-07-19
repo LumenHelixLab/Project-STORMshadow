@@ -229,7 +229,7 @@ const server = http.createServer((req, res) => {
   if (urlPath.startsWith('/protocol/')) {
     const rel = urlPath.slice('/protocol/'.length);
     filePath = path.resolve(PROTOCOL_ROOT, rel);
-    if (!filePath.startsWith(PROTOCOL_ROOT + path.sep)) {
+    if (!filePath.startsWith(PROTOCOL_ROOT + path.sep) && filePath !== PROTOCOL_ROOT) {
       res.writeHead(400, { 'Content-Type': 'text/plain' });
       res.end('Bad request');
       return;
@@ -247,6 +247,7 @@ const server = http.createServer((req, res) => {
   const ext         = path.extname(filePath);
   const contentType = MIME_TYPES[ext] || 'application/octet-stream';
 
+  // filePath has been validated to be within STATIC_ROOT or PROTOCOL_ROOT above.
   fs.readFile(filePath, (err, data) => {
     if (err) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
