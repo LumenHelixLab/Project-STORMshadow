@@ -539,6 +539,29 @@
   const statSent        = document.getElementById('statSent');
   const statReceived    = document.getElementById('statReceived');
 
+  // Delay in ms between a remote activation click and the follow-up capture,
+  // giving the DOM time to settle after the click handler has run.
+  const ACTIVATE_SETTLE_MS     = 80;
+  // Interval in ms for the auto-capture mode (one frame per second).
+  const AUTO_CAPTURE_INTERVAL_MS = 1000;
+
+  // ── Safe media source ──────────────────────────────────────────────────────
+  /**
+   * Validate a media URL received over the wire before assigning it to a
+   * native media element.  Only http: and https: URLs are allowed to prevent
+   * javascript: or data: URI injection.
+   * @param {string} src
+   * @returns {string} The original src when safe, or an empty string otherwise.
+   */
+  function safeSrc(src) {
+    if (!src || typeof src !== 'string') return '';
+    try {
+      const u = new URL(src, window.location.href);
+      if (u.protocol === 'http:' || u.protocol === 'https:') return u.href;
+    } catch (_) {}
+    return '';
+  }
+
   // ── Role detection ─────────────────────────────────────────────────────────
   /**
    * Return the semantic role for a DOM element.
@@ -824,7 +847,9 @@
       if (el.role === 'video' && el.media) {
         const vid     = document.createElement('video');
         vid.controls  = true;
-        if (el.media.src) vid.src = el.media.src;
+        // Use safeSrc to reject non-http(s) URLs received from the relay.
+        const vsrc = safeSrc(el.media.src);
+        if (vsrc) vid.src = vsrc;
         vid.muted     = el.media.muted;
         vid.loop      = el.media.loop;
         vid.style.width  = '100%';
@@ -833,7 +858,9 @@
       } else if (el.role === 'audio' && el.media) {
         const aud     = document.createElement('audio');
         aud.controls  = true;
-        if (el.media.src) aud.src = el.media.src;
+        // Use safeSrc to reject non-http(s) URLs received from the relay.
+        const asrc = safeSrc(el.media.src);
+        if (asrc) aud.src = asrc;
         aud.style.width = '100%';
         node.appendChild(aud);
       } else {
@@ -884,7 +911,10 @@
 
     ws.addEventListener('message', (ev) => {
       let packet;
-      try { packet = JSON.parse(ev.data); } catch (_) { return; }
+      try { packet = JSON.parse(ev.data); } catch (e) {
+        console.debug('[SemBro] Received non-JSON WebSocket message:', e.message);
+        return;
+      }
 
       switch (packet.type) {
         case 'hello':
@@ -913,8 +943,9 @@
             const target = state.current.get(packet.targetId);
             if (target) {
               target.click();
-              // Re-send a fresh frame shortly after the DOM mutation settles
-              setTimeout(sendFrame, 80);
+              // Wait ACTIVATE_SETTLE_MS before re-capturing to allow the DOM
+              // mutation triggered by the click handler to complete.
+              setTimeout(sendFrame, ACTIVATE_SETTLE_MS);
             }
           }
           break;
@@ -956,7 +987,7 @@
       autoBtn.textContent = 'Auto off';
       autoBtn.classList.remove('active');
     } else {
-      state.autoTimer = setInterval(sendFrame, 1000);
+      state.autoTimer = setInterval(sendFrame, AUTO_CAPTURE_INTERVAL_MS);
       autoBtn.textContent = 'Auto on';
       autoBtn.classList.add('active');
     }

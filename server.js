@@ -8,6 +8,10 @@ const crypto = require('crypto');
 const PORT = Number(process.env.PORT) || 4173;
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
+// Resolved base directories used to prevent path-traversal in the file server.
+const STATIC_ROOT   = path.resolve(__dirname, 'public');
+const PROTOCOL_ROOT = path.resolve(__dirname, 'protocol');
+
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js':   'text/javascript; charset=utf-8',
@@ -171,6 +175,8 @@ function handleUpgrade(req, socket) {
     // Handle close frame
     if (controls.includes('close')) {
       clients.delete(socket);
+      // Best-effort: send the RFC 6455 close acknowledgement frame.
+      // The write may fail if the peer already closed the TCP connection, which is safe to ignore.
       try { socket.write(Buffer.from([0x88, 0x00])); } catch (_) {}
       socket.destroy();
       return;
@@ -217,13 +223,25 @@ const server = http.createServer((req, res) => {
   let urlPath = (req.url || '/').split('?')[0];
   if (urlPath === '/') urlPath = '/index.html';
 
-  // Protocol schema files are served from the project root /protocol/ directory.
-  // Everything else is served from public/.
+  // Resolve the file path and guard against path-traversal attacks.
+  // Protocol schema files live in /protocol/; everything else in public/.
   let filePath;
   if (urlPath.startsWith('/protocol/')) {
-    filePath = path.join(__dirname, urlPath);
+    const rel = urlPath.slice('/protocol/'.length);
+    filePath = path.resolve(PROTOCOL_ROOT, rel);
+    if (!filePath.startsWith(PROTOCOL_ROOT + path.sep)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('Bad request');
+      return;
+    }
   } else {
-    filePath = path.join(__dirname, 'public', urlPath);
+    const rel = urlPath.startsWith('/') ? urlPath.slice(1) : urlPath;
+    filePath = path.resolve(STATIC_ROOT, rel);
+    if (!filePath.startsWith(STATIC_ROOT + path.sep) && filePath !== STATIC_ROOT) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('Bad request');
+      return;
+    }
   }
 
   const ext         = path.extname(filePath);
