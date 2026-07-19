@@ -590,12 +590,43 @@
     const tag = el.tagName.toLowerCase();
     if (tag === 'a')      return 'link';
     if (tag === 'button') return 'button';
-    if (tag === 'input')  return el.type === 'checkbox' ? 'checkbox' : 'textbox';
+    if (tag === 'input') {
+      const type = (el.type || '').toLowerCase();
+      if (type === 'checkbox' || type === 'radio') return type;
+      if (type === 'submit' || type === 'reset' || type === 'button') return 'button';
+      return 'textbox';
+    }
     if (tag === 'select') return 'combobox';
+    if (tag === 'textarea') return 'textbox';
     if (tag === 'video')  return 'video';
     if (tag === 'audio')  return 'audio';
+    if (tag === 'img')    return 'img';
     if (/^h[1-6]$/.test(tag)) return 'heading';
+    if (tag === 'nav')    return 'navigation';
+    if (tag === 'main')   return 'main';
+    if (tag === 'aside')  return 'complementary';
+    if (tag === 'footer') return 'contentinfo';
+    if (tag === 'header') return 'banner';
+    if (tag === 'form')   return 'form';
+    if (tag === 'ul' || tag === 'ol') return 'list';
+    if (tag === 'li')     return 'listitem';
     return tag;
+  }
+
+  /**
+   * Return a semantic group/landmark label for an element, if any.
+   */
+  function groupOf(el) {
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'header' || el.closest('header')) return 'banner';
+    if (tag === 'footer' || el.closest('footer')) return 'contentinfo';
+    if (tag === 'nav'    || el.closest('nav'))    return 'navigation';
+    if (tag === 'main'   || el.closest('main'))   return 'main';
+    if (tag === 'aside'  || el.closest('aside'))  return 'complementary';
+    if (tag === 'article' || el.closest('article')) return 'article';
+    if (tag === 'section' || el.closest('section')) return 'section';
+    if (tag === 'form'   || el.closest('form'))   return 'form';
+    return null;
   }
 
   // ── Stable ID ──────────────────────────────────────────────────────────────
@@ -677,7 +708,7 @@
     const surface = document.getElementById('sourceSurface');
     const surfaceRect = surface.getBoundingClientRect();
 
-    const selector  = 'a,button,input,select,textarea,video,audio,h1,h2,h3,p,label,article,section';
+    const selector  = 'a,button,input,select,textarea,video,audio,h1,h2,h3,h4,h5,h6,p,label,article,section,img,nav,main,aside,footer,header,form,ul,ol,li';
     const candidates = surface.querySelectorAll(selector);
 
     state.current.clear();
@@ -692,10 +723,18 @@
       const tag         = el.tagName.toLowerCase();
       const id          = stableId(el);
       const role        = roleOf(el);
-      const interactive = ['button', 'link', 'checkbox', 'textbox', 'combobox'].includes(role);
+      const group       = groupOf(el);
+      const interactive = ['button', 'link', 'checkbox', 'radio', 'textbox', 'combobox'].includes(role);
       const disabled    = el.disabled === true || el.hasAttribute('disabled');
-      const text        = (el.innerText || '').trim().slice(0, ELEMENT_TEXT_MAX_LEN);
+      const text        = (el.innerText || el.getAttribute('alt') || el.getAttribute('aria-label') || '').trim().slice(0, ELEMENT_TEXT_MAX_LEN);
       const media       = mediaMeta(el);
+
+      const style = window.getComputedStyle(el);
+      const visible = style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0;
+      if (!visible) continue;
+
+      const focused = document.activeElement === el;
+      const hovered = el.matches(':hover');
 
       state.current.set(id, el);
 
@@ -703,10 +742,20 @@
         id,
         tag,
         role,
+        group,
         text,
         path:        cssPath(el),
         interactive,
         disabled,
+        focused,
+        hovered,
+        styles: {
+          color:            style.color,
+          backgroundColor:  style.backgroundColor,
+          fontSize:         style.fontSize,
+          fontFamily:       style.fontFamily.split(',')[0].replace(/["']/g, '').trim(),
+          fontWeight:       style.fontWeight,
+        },
         rect: {
           x:      Math.round(domRect.left   - surfaceRect.left),
           y:      Math.round(domRect.top    - surfaceRect.top),
@@ -719,6 +768,12 @@
       elements.push(entry);
     }
 
+    // Capture scroll/focus metadata at the surface level
+    const surfaceMeta = {
+      activeElementId: document.activeElement ? stableId(document.activeElement) : null,
+      hoverElementId:  document.querySelector(':hover') ? stableId(document.querySelector(':hover')) : null,
+    };
+
     const captureMs = parseFloat((performance.now() - t0).toFixed(2));
 
     const viewport = {
@@ -728,13 +783,13 @@
       scrollY: window.scrollY,
     };
 
-    return buildFrame('key', elements, [], viewport, captureMs);
+    return buildFrame('key', elements, [], viewport, captureMs, surfaceMeta);
   }
 
   /**
    * Build a semantic-frame-v2 payload with a SHA-256 checksum.
    */
-  async function buildFrame(frameType, elements, removedIds, viewport, captureMs) {
+  async function buildFrame(frameType, elements, removedIds, viewport, captureMs, surfaceMeta) {
     const base = {
       schema:      'semantic-frame-v2',
       sequence:    state.sequence,
@@ -742,6 +797,7 @@
       capturedAt:  Date.now(),
       captureMs,
       viewport,
+      surfaceMeta,
       elements,
       removedIds,
     };
@@ -858,6 +914,7 @@
       removedIds,
       fullFrame.viewport,
       fullFrame.captureMs,
+      fullFrame.surfaceMeta,
     );
     return { frame: delta, changed: changed.length };
   }
@@ -1014,6 +1071,9 @@
 
       const channel = channelInput.value.trim() || 'semantic-lab';
       ws.send(JSON.stringify({ type: 'join', channel, protocolVersion: state.protocolVersion }));
+
+      // Start observing DOM mutations for incremental auto-capture.
+      startMutationObserver();
     });
 
     ws.addEventListener('message', (ev) => {
@@ -1070,6 +1130,7 @@
       statusDot.title  = 'WebSocket disconnected';
       connectBtn.textContent = 'Connect';
       state.ws = null;
+      stopMutationObserver();
     });
 
     ws.addEventListener('error', () => ws.close());
@@ -1079,6 +1140,49 @@
     if (state.ws) {
       state.ws.close();
       state.ws = null;
+    }
+  }
+
+  // ── MutationObserver-driven incremental capture ────────────────────────────
+  /**
+   * Observe #sourceSurface for DOM changes. When a change occurs, schedule a
+   * debounced capture so rapid mutations collapse into a single frame.
+   */
+  function startMutationObserver() {
+    if (state.mutationObserver || modeSelect.value === 'receiver') return;
+    const surface = document.getElementById('sourceSurface');
+    if (!surface) return;
+    let debounceTimer = null;
+    const scheduleCapture = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        sendFrame();
+      }, 150);
+    };
+    state.mutationObserver = new MutationObserver((mutations) => {
+      let relevant = false;
+      for (const m of mutations) {
+        if (surface.contains(m.target) || surface === m.target) {
+          relevant = true;
+          break;
+        }
+      }
+      if (relevant) scheduleCapture();
+    });
+    state.mutationObserver.observe(surface, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'disabled', 'hidden'],
+      characterData: true,
+    });
+  }
+
+  function stopMutationObserver() {
+    if (state.mutationObserver) {
+      state.mutationObserver.disconnect();
+      state.mutationObserver = null;
     }
   }
 
