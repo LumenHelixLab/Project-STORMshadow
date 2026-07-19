@@ -548,6 +548,9 @@
   // Chosen to keep per-element JSON small while preserving enough context for
   // the receiver to label interactive elements meaningfully.
   const ELEMENT_TEXT_MAX_LEN     = 200;
+  // Maximum characters displayed per element label in the receiver stage.
+  // Shorter than ELEMENT_TEXT_MAX_LEN because receiver tiles are small.
+  const RECEIVER_DISPLAY_MAX_LEN = 60;
 
   // ── Safe media source ──────────────────────────────────────────────────────
   /**
@@ -562,7 +565,9 @@
     try {
       const u = new URL(src, window.location.href);
       if (u.protocol === 'http:' || u.protocol === 'https:') return u.href;
-    } catch (_) {}
+    } catch (err) {
+      console.debug('[SemBro] Invalid media URL rejected:', src, err.message);
+    }
     return '';
   }
 
@@ -876,7 +881,7 @@
         if (el.text) {
           const textSpan = document.createElement('span');
           textSpan.className   = 'rx-text';
-          textSpan.textContent = el.text.slice(0, 60);
+          textSpan.textContent = el.text.slice(0, RECEIVER_DISPLAY_MAX_LEN);
           node.appendChild(textSpan);
         }
       }
@@ -918,7 +923,8 @@
     ws.addEventListener('message', (ev) => {
       let packet;
       try { packet = JSON.parse(ev.data); } catch (e) {
-        console.debug('[SemBro] Received non-JSON WebSocket message:', e.message);
+        console.debug('[SemBro] Received non-JSON WebSocket message:', e.message,
+          '— data:', String(ev.data).slice(0, 100));
         return;
       }
 

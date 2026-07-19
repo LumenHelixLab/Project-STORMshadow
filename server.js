@@ -106,8 +106,8 @@ function decodeFrames(buffer) {
       // Text frame — parse as JSON
       try {
         messages.push(JSON.parse(payload.toString('utf8')));
-      } catch (_) {
-        // malformed JSON — drop silently
+      } catch (err) {
+        console.debug('[SemBro] Malformed JSON WebSocket frame:', err.message);
       }
     } else if (opcode === 0x8) {
       // Connection-close frame
@@ -223,8 +223,18 @@ const server = http.createServer((req, res) => {
   let urlPath = (req.url || '/').split('?')[0];
   if (urlPath === '/') urlPath = '/index.html';
 
-  // Resolve the file path and guard against path-traversal attacks.
+  // Early rejection of any URL containing path-traversal sequences before
+  // the path is resolved.  This covers both decoded ('..') and percent-encoded
+  // ('%2e%2e') forms after Node's built-in URL normalization.
+  if (urlPath.includes('..')) {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    res.end('Bad request');
+    return;
+  }
+
+  // Resolve the file path within an allowed base directory.
   // Protocol schema files live in /protocol/; everything else in public/.
+  // The boundary check is a secondary defence-in-depth guard.
   let filePath;
   if (urlPath.startsWith('/protocol/')) {
     const rel = urlPath.slice('/protocol/'.length);
