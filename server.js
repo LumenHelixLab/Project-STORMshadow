@@ -8,6 +8,23 @@ const crypto = require('crypto');
 const PORT = Number(process.env.PORT) || 4173;
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
+// Allowed origins for WebSocket upgrade. Empty means no origin check.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+// Content-Security-Policy for the static file server.
+const CSP_HEADER = process.env.CSP ||
+  "default-src 'self'; " +
+  "connect-src 'self' ws: wss:; " +
+  "img-src 'self' data: blob:; " +
+  "media-src 'self' https:; " +
+  "script-src 'self'; " +
+  "style-src 'self' 'unsafe-inline'; " +
+  "frame-ancestors 'none'; " +
+  "base-uri 'self';";
+
 // Resolved base directories used to prevent path-traversal in the file server.
 const STATIC_ROOT   = path.resolve(__dirname, 'public');
 const PROTOCOL_ROOT = path.resolve(__dirname, 'protocol');
@@ -214,6 +231,15 @@ function handleUpgrade(req, socket) {
     return;
   }
 
+  // Origin validation for WebSocket connections
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.length && (!origin || !ALLOWED_ORIGINS.includes(origin))) {
+    logger.warn('WebSocket upgrade rejected due to origin', { origin, ip });
+    socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
   const key = req.headers['sec-websocket-key'];
   if (!key) {
     socket.destroy();
@@ -289,12 +315,26 @@ function handleUpgrade(req, socket) {
           : 'semantic-lab';
         logger.info('client joined channel', { id, from: meta.channel, to: requested, ip });
         meta.channel = requested;
+        meta.protocolVersion = msg.protocolVersion || 'v1';
         sendToSocket(socket, {
           type:    'joined',
           channel: meta.channel,
           id:      meta.id,
+          protocolVersion: meta.protocolVersion,
           at:      Date.now(),
         });
+      } else if (msg.type === 'permission-request' || msg.type === 'permission-response') {
+        // Relay permission messages only to the intended target node on the same channel
+        const outgoing = Object.assign({}, msg, {
+          sourceNodeId: meta.id,
+          channel:      meta.channel,
+          relayedAt:    Date.now(),
+        });
+        for (const [peer, peerMeta] of clients) {
+          if (peer !== socket && peerMeta.channel === meta.channel && peerMeta.id === msg.targetNodeId) {
+            sendToSocket(peer, outgoing);
+          }
+        }
       } else {
         // Relay all other packets to every peer on the same channel
         const outgoing = Object.assign({}, msg, {
@@ -445,12 +485,17 @@ const server = http.createServer((req, res) => {
       }
 
       const headers = {
-        'Content-Type':   contentType,
-        'Content-Length': stats.size.toString(),
-        'Cache-Control':  `public, max-age=${CACHE_MAX_AGE}`,
-        'Accept-Ranges':  'bytes',
-        'Last-Modified':  stats.mtime.toUTCString(),
-        'ETag':           `"${stats.mtime.getTime().toString(36)}-${stats.size.toString(36)}"`,
+        'Content-Type':                   contentType,
+        'Content-Length':                 stats.size.toString(),
+        'Cache-Control':                  `public, max-age=${CACHE_MAX_AGE}`,
+        'Accept-Ranges':                  'bytes',
+        'Last-Modified':                  stats.mtime.toUTCString(),
+        'ETag':                           `"${stats.mtime.getTime().toString(36)}-${stats.size.toString(36)}"`,
+        'Content-Security-Policy':        CSP_HEADER,
+        'X-Content-Type-Options':         'nosniff',
+        'X-Frame-Options':                'DENY',
+        'Referrer-Policy':                'strict-origin-when-cross-origin',
+        'Permissions-Policy':             'camera=(), microphone=(), geolocation=()',
       };
       res.writeHead(200, headers);
       const stream = fs.createReadStream(filePath);

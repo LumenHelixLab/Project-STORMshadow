@@ -395,6 +395,8 @@
       <option value="medium">Medium</option>
       <option value="low">Low</option>
     </select>
+    <span class="ctrl-label">E2EE PIN</span>
+    <input type="text" id="e2eeInput" placeholder="none" style="width:70px" />
   </div>
 </header>
 
@@ -556,6 +558,7 @@
   const statSent        = document.getElementById('statSent');
   const statReceived    = document.getElementById('statReceived');
   const qualitySelect   = document.getElementById('qualitySelect');
+  const e2eeInput       = document.getElementById('e2eeInput');
 
   // Receiver-side state for incremental/delta rendering
   const rxState = {
@@ -725,6 +728,23 @@
    * Capture the visible semantic content of #sourceSurface.
    * Returns a semantic-frame-v2 object (key frame).
    */
+  function isSensitiveElement(el) {
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    if (tag === 'input' && (type === 'password' || type === 'hidden')) return true;
+    if (el.getAttribute('autocomplete') === 'current-password') return true;
+    if (el.getAttribute('aria-hidden') === 'true') return true;
+    return false;
+  }
+
+  function sanitizeText(el, text) {
+    if (isSensitiveElement(el)) return '';
+    // Redact likely PII tokens: email addresses and credit-card-like numbers
+    return text
+      .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, '[EMAIL]')
+      .replace(/\b(?:\d[ -]*?){13,16}\b/g, '[CARD]');
+  }
+
   function captureSemanticFrame() {
     const t0      = performance.now();
     const surface = document.getElementById('sourceSurface');
@@ -748,8 +768,9 @@
       const group       = groupOf(el);
       const interactive = ['button', 'link', 'checkbox', 'radio', 'textbox', 'combobox'].includes(role);
       const disabled    = el.disabled === true || el.hasAttribute('disabled');
-      const text        = (el.innerText || el.getAttribute('alt') || el.getAttribute('aria-label') || '').trim().slice(0, ELEMENT_TEXT_MAX_LEN);
-      const media       = mediaMeta(el);
+      const rawText     = (el.innerText || el.getAttribute('alt') || el.getAttribute('aria-label') || '').trim().slice(0, ELEMENT_TEXT_MAX_LEN);
+      const text        = sanitizeText(el, rawText);
+      const media       = isSensitiveElement(el) ? null : mediaMeta(el);
 
       const style = window.getComputedStyle(el);
       const visible = style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0;
@@ -979,11 +1000,51 @@
     renderFrame(frame);
 
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'semantic-frame', frame }));
+      const envelope = JSON.stringify({ type: 'semantic-frame', frame });
+      if (e2ee.key) {
+        e2ee.encrypt(envelope).then((encrypted) => {
+          state.ws.send(JSON.stringify({ type: 'encrypted-frame', payload: encrypted }));
+        });
+      } else {
+        state.ws.send(envelope);
+      }
     } else {
       console.log('[SemBro] Capture local only — WebSocket not connected');
     }
   }
+
+  // ── End-to-end encryption (experimental) ───────────────────────────────────
+  const e2ee = {
+    key: null,
+    async deriveKey(pin) {
+      const enc = new TextEncoder();
+      const baseKey = await crypto.subtle.importKey('raw', enc.encode(pin), 'PBKDF2', false, ['deriveKey']);
+      return crypto.subtle.deriveKey(
+        { name: 'PBKDF2', salt: enc.encode('SemBro-v1'), iterations: 100000, hash: 'SHA-256' },
+        baseKey,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt'],
+      );
+    },
+    async setKey(pin) {
+      this.key = await this.deriveKey(pin);
+    },
+    async encrypt(plaintext) {
+      if (!this.key) return { ciphertext: null, iv: null, plaintext };
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const enc = new TextEncoder();
+      const buf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, this.key, enc.encode(plaintext));
+      return { ciphertext: Array.from(new Uint8Array(buf)), iv: Array.from(iv), plaintext: null };
+    },
+    async decrypt(payload) {
+      if (!this.key || !payload.ciphertext) return payload;
+      const iv = new Uint8Array(payload.iv);
+      const data = new Uint8Array(payload.ciphertext);
+      const buf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, this.key, data);
+      return new TextDecoder().decode(buf);
+    },
+  };
 
   // ── Input permission state ─────────────────────────────────────────────────
   const inputPermissions = new Map(); // sourceNodeId -> { approved: boolean, pending: Set() }
@@ -1356,6 +1417,7 @@
             const incoming = packet.frame;
             validateFrame(incoming).then(() => {
               state.framesReceived++;
+              incoming.sourceNodeId = packet.sourceNodeId;
               state.lastFrame = incoming;
               showWire(incoming);
               updateStats(incoming, incoming.frameType === 'delta' ? incoming.elements.length : null);
@@ -1363,6 +1425,24 @@
             }).catch((err) => {
               console.warn('[SemBro] Received invalid semantic frame:', err.message);
             });
+          }
+          break;
+
+        case 'encrypted-frame':
+          if (modeSelect.value !== 'source' && e2ee.key) {
+            e2ee.decrypt(packet.payload).then((json) => {
+              const inner = JSON.parse(json);
+              if (inner.type === 'semantic-frame') {
+                inner.frame.sourceNodeId = packet.sourceNodeId;
+                validateFrame(inner.frame).then(() => {
+                  state.framesReceived++;
+                  state.lastFrame = inner.frame;
+                  showWire(inner.frame);
+                  updateStats(inner.frame, inner.frame.frameType === 'delta' ? inner.frame.elements.length : null);
+                  renderFrame(inner.frame);
+                }).catch((err) => console.warn('[SemBro] Encrypted frame invalid:', err.message));
+              }
+            }).catch((err) => console.warn('[SemBro] Decryption failed:', err.message));
           }
           break;
 
@@ -1507,6 +1587,15 @@
     document.getElementById('sourcePane').style.display =
       modeSelect.value === 'receiver' ? 'none' : '';
     // Receiver pane is always visible
+  });
+
+  e2eeInput.addEventListener('change', () => {
+    const pin = e2eeInput.value.trim();
+    if (pin) {
+      e2ee.setKey(pin).then(() => console.log('[SemBro] E2EE enabled'));
+    } else {
+      e2ee.key = null;
+    }
   });
 
   qualitySelect.addEventListener('change', () => {
