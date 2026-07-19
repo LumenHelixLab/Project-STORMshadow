@@ -1,0 +1,11 @@
+{
+  "name": "project-sembro",
+  "version": "1.0.0",
+  "description": "NUMO Semantic Browser — WebSocket semantic page transport demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "private": true
+}

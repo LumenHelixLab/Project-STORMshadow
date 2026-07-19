@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NUMO Semantic Browser</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --border:   #2a2d3a;
+      --accent:   #6c63ff;
+      --text:     #e0e0e8;
+      --muted:    #7a7a8c;
+      --green:    #22c55e;
+      --yellow:   #eab308;
+      --red:      #dc2626;
+    }
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    /* ── Header / controls ───────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0.6rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+
+    header h1 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--accent);
+      white-space: nowrap;
+      margin-right: 0.5rem;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .ctrl-label {
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    select, input[type="text"] {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.28rem 0.55rem;
+      font-size: 0.8rem;
+    }
+
+    button.ctrl {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 0.28rem 0.7rem;
+      font-size: 0.8rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity 0.15s;
+    }
+    button.ctrl:hover { opacity: 0.82; }
+    button.ctrl.secondary {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    button.ctrl.active {
+      background: var(--green);
+      border-color: var(--green);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .status-dot.connected { background: var(--green); }
+
+    /* ── Main grid ───────────────────────────────────────── */
+    .main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr auto auto;
+      min-height: 0;
+    }
+
+    .pane {
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .pane-title {
+      background: var(--surface);
+      padding: 0.4rem 0.9rem;
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      flex-shrink: 0;
+    }
+
+    .pane-body {
+      flex: 1;
+      overflow: auto;
+      padding: 1rem;
+      min-height: 0;
+    }
+
+    /* ── Source surface ──────────────────────────────────── */
+    .source-frame {
+      font-family: system-ui, sans-serif;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, #1e2240 0%, #2d1f66 100%);
+      border-radius: 8px;
+      padding: 1.75rem 1.5rem;
+      margin-bottom: 1.1rem;
+      text-align: center;
+    }
+    .hero h1 { font-size: 1.6rem; margin-bottom: 0.45rem; }
+    .hero p  { color: #b0aace; font-size: 0.9rem; }
+
+    .btn-row {
+      display: flex;
+      gap: 0.65rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.1rem;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 0.5rem 1rem;
+      font-size: 0.88rem;
+      cursor: pointer;
+    }
+    .btn-primary:hover { opacity: 0.85; }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.5rem 1rem;
+      font-size: 0.88rem;
+      cursor: pointer;
+    }
+    .btn-secondary:hover { background: var(--surface); }
+
+    .btn-danger {
+      background: var(--red);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 0.5rem 1rem;
+      font-size: 0.88rem;
+      cursor: pointer;
+    }
+    .btn-danger:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 0.65rem;
+      margin-bottom: 1.1rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.8rem;
+    }
+    .card h3 { font-size: 0.88rem; margin-bottom: 0.25rem; }
+    .card p  { font-size: 0.78rem; color: var(--muted); }
+
+    .about-section {
+      margin-bottom: 1.1rem;
+    }
+    .about-section h2 { font-size: 1rem; margin-bottom: 0.4rem; }
+    .about-section p  { font-size: 0.82rem; color: var(--muted); line-height: 1.55; }
+
+    .label-row {
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.1rem;
+    }
+    .tag {
+      font-size: 0.72rem;
+      padding: 0.18rem 0.5rem;
+      border-radius: 999px;
+      background: #2d1f66;
+      color: #b0aace;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      margin-bottom: 1.1rem;
+    }
+    .input-row label { font-size: 0.82rem; color: var(--muted); white-space: nowrap; }
+    .input-row input {
+      flex: 1;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.38rem 0.7rem;
+      font-size: 0.82rem;
+    }
+
+    .video-wrap { border-radius: 6px; overflow: hidden; }
+    .video-wrap video { width: 100%; display: block; }
+
+    /* ── Receiver stage ──────────────────────────────────── */
+    #receiverStage {
+      position: relative;
+      background: var(--bg);
+    }
+
+    .receiver-canvas {
+      position: relative;
+      transform-origin: top left;
+    }
+
+    .rx-el {
+      position: absolute;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.68rem;
+      color: var(--text);
+      background: rgba(108, 99, 255, 0.07);
+      cursor: pointer;
+      text-align: center;
+      padding: 2px 4px;
+      transition: background 0.1s;
+    }
+    .rx-el:hover { background: rgba(108, 99, 255, 0.22); }
+
+    .rx-role {
+      font-size: 0.58rem;
+      color: var(--accent);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      display: block;
+      line-height: 1.2;
+    }
+
+    .rx-text {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+
+    .rx-placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      min-height: 200px;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    /* ── Stats bar ───────────────────────────────────────── */
+    .stats-bar {
+      grid-column: 1 / -1;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
+    }
+
+    .stat-card {
+      flex: 1 1 110px;
+      padding: 0.55rem 0.9rem;
+      border-right: 1px solid var(--border);
+      min-width: 90px;
+    }
+    .stat-card:last-child { border-right: none; }
+
+    .stat-label {
+      font-size: 0.62rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .stat-value {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    /* ── Wire inspector ──────────────────────────────────── */
+    .wire-pane {
+      grid-column: 1 / -1;
+      border-top: 1px solid var(--border);
+      max-height: 210px;
+      overflow: auto;
+      background: #080b12;
+    }
+
+    .wire-pane pre {
+      font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 0.7rem;
+      color: #88c0d0;
+      padding: 0.7rem 1rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Controls ──────────────────────────────────────────── -->
+<header>
+  <h1>◉ NUMO SemBro</h1>
+  <div class="controls">
+    <span class="ctrl-label">Mode</span>
+    <select id="modeSelect">
+      <option value="both">Both</option>
+      <option value="source">Source</option>
+      <option value="receiver">Receiver</option>
+    </select>
+
+    <span class="ctrl-label">Channel</span>
+    <input type="text" id="channelInput" value="semantic-lab" style="width:120px" />
+
+    <span class="status-dot" id="statusDot" title="WebSocket disconnected"></span>
+    <button class="ctrl" id="connectBtn">Connect</button>
+    <button class="ctrl secondary" id="captureBtn">Capture now</button>
+    <button class="ctrl secondary" id="autoBtn">Auto off</button>
+  </div>
+</header>
+
+<!-- ── Main grid ─────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Source pane -->
+  <div class="pane" id="sourcePane">
+    <div class="pane-title">Source page</div>
+    <div class="pane-body">
+      <div id="sourceSurface" class="source-frame">
+
+        <div class="hero">
+          <h1>NUMO Semantic Browser</h1>
+          <p>Transmitting page structure, not pixels.</p>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-primary"   id="starterButton">Add starter kit</button>
+          <button class="btn-secondary" id="learnButton">Learn more</button>
+          <button class="btn-danger"    id="resetButton" disabled>Reset</button>
+        </div>
+
+        <div class="cards">
+          <div class="card">
+            <h3>Transport</h3>
+            <p>JSON over WebSocket — no video codec required.</p>
+          </div>
+          <div class="card">
+            <h3>Semantics</h3>
+            <p>Roles, text, bounds, and interaction flags.</p>
+          </div>
+          <div class="card">
+            <h3>Media</h3>
+            <p>Native player delegation on the receiver.</p>
+          </div>
+          <div class="card">
+            <h3>Inspect</h3>
+            <p>Full wire transparency via the JSON panel.</p>
+          </div>
+        </div>
+
+        <article class="about-section">
+          <h2>About this demo</h2>
+          <p>
+            This proof of concept captures a live DOM as a compact semantic frame and
+            relays it over a WebSocket channel so a remote receiver can reconstruct a
+            thin client view without pixel streaming.
+          </p>
+        </article>
+
+        <div class="label-row">
+          <span class="tag">semantic</span>
+          <span class="tag">websocket</span>
+          <span class="tag">no-pixel-stream</span>
+          <span class="tag">json-transport</span>
+          <span class="tag">prototype</span>
+        </div>
+
+        <div class="input-row">
+          <label for="queryInput">Search:</label>
+          <input type="text" id="queryInput" placeholder="Type a query…" />
+        </div>
+
+        <div class="video-wrap">
+          <video id="demoVideo" controls muted loop>
+            <source src="https://www.w3schools.com/html/mov_bbb.mp4" type="video/mp4" />
+          </video>
+        </div>
+
+      </div><!-- #sourceSurface -->
+    </div>
+  </div>
+
+  <!-- Receiver pane -->
+  <div class="pane" id="receiverPane">
+    <div class="pane-title">Receiver stage</div>
+    <div class="pane-body" id="receiverStage">
+      <div class="rx-placeholder" id="rxPlaceholder">Waiting for semantic frame…</div>
+    </div>
+  </div>
+
+  <!-- Stats bar -->
+  <div class="stats-bar">
+    <div class="stat-card">
+      <div class="stat-label">Elements</div>
+      <div class="stat-value" id="statElements">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Interactive</div>
+      <div class="stat-value" id="statInteractive">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Capture ms</div>
+      <div class="stat-value" id="statCapture">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Changed</div>
+      <div class="stat-value" id="statChanged">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Payload</div>
+      <div class="stat-value" id="statPayload">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Sent</div>
+      <div class="stat-value" id="statSent">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Received</div>
+      <div class="stat-value" id="statReceived">0</div>
+    </div>
+  </div>
+
+  <!-- Wire inspector -->
+  <div class="pane wire-pane">
+    <div class="pane-title">Semantic wire</div>
+    <pre id="wireContent">// No frame yet — capture or receive a semantic frame to inspect the JSON.</pre>
+  </div>
+
+</div><!-- .main -->
+
+<script>
+  'use strict';
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  const state = {
+    ws:               null,
+    nodeId:           'browser-' + Math.random().toString(36).slice(2, 8),
+    sequence:         1,
+    framesSent:       0,
+    framesReceived:   0,
+    lastFrame:        null,
+    previousElements: new Map(),
+    autoTimer:        null,
+    seen:             new WeakMap(),   // DOM element → stable id string
+    current:          new Map(),       // stable id → live DOM element
+    nextId:           1
+  };
+
+  // ── DOM refs ───────────────────────────────────────────────────────────────
+  const modeSelect    = document.getElementById('modeSelect');
+  const channelInput  = document.getElementById('channelInput');
+  const statusDot     = document.getElementById('statusDot');
+  const connectBtn    = document.getElementById('connectBtn');
+  const captureBtn    = document.getElementById('captureBtn');
+  const autoBtn       = document.getElementById('autoBtn');
+  const receiverStage = document.getElementById('receiverStage');
+  const wireContent   = document.getElementById('wireContent');
+
+  const statElements    = document.getElementById('statElements');
+  const statInteractive = document.getElementById('statInteractive');
+  const statCapture     = document.getElementById('statCapture');
+  const statChanged     = document.getElementById('statChanged');
+  const statPayload     = document.getElementById('statPayload');
+  const statSent        = document.getElementById('statSent');
+  const statReceived    = document.getElementById('statReceived');
+
+  // ── Role detection ─────────────────────────────────────────────────────────
+  /**
+   * Return the semantic role for a DOM element.
+   * An existing `role` attribute always wins.
+   */
+  function roleOf(el) {
+    if (el.hasAttribute('role')) return el.getAttribute('role');
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'a')      return 'link';
+    if (tag === 'button') return 'button';
+    if (tag === 'input')  return el.type === 'checkbox' ? 'checkbox' : 'textbox';
+    if (tag === 'select') return 'combobox';
+    if (tag === 'video')  return 'video';
+    if (tag === 'audio')  return 'audio';
+    if (/^h[1-6]$/.test(tag)) return 'heading';
+    return tag;
+  }
+
+  // ── Stable ID ──────────────────────────────────────────────────────────────
+  /**
+   * Return a stable semantic ID for a DOM element.
+   * Elements with a DOM `id` attribute use `id:<domId>`.
+   * Others are assigned a session-scoped `el-<n>` stored in a WeakMap.
+   */
+  function stableId(el) {
+    if (el.id) return 'id:' + el.id;
+    if (!state.seen.has(el)) {
+      state.seen.set(el, 'el-' + state.nextId++);
+    }
+    return state.seen.get(el);
+  }
+
+  // ── CSS path ───────────────────────────────────────────────────────────────
+  /**
+   * Build a short CSS-selector path for debugging.
+   * Path is relative to the #sourceSurface container.
+   */
+  function cssPath(el) {
+    const parts   = [];
+    const surface = document.getElementById('sourceSurface');
+    let   current = el;
+
+    while (current && current !== surface && current !== document.body) {
+      const tag    = current.tagName.toLowerCase();
+      const parent = current.parentElement;
+      if (parent) {
+        const siblings = Array.from(parent.children).filter(
+          (c) => c.tagName === current.tagName,
+        );
+        const idx = siblings.indexOf(current) + 1;
+        parts.unshift(
+          siblings.length > 1 ? `${tag}:nth-of-type(${idx})` : tag,
+        );
+      } else {
+        parts.unshift(tag);
+      }
+      current = parent;
+    }
+
+    return parts.join(' > ');
+  }
+
+  // ── Media metadata ─────────────────────────────────────────────────────────
+  /**
+   * Extract media metadata from a <video> or <audio> element.
+   * Returns null for any other element type.
+   */
+  function mediaMeta(el) {
+    const tag = el.tagName.toLowerCase();
+    if (tag !== 'video' && tag !== 'audio') return null;
+
+    // currentSrc is populated once the browser has chosen a source
+    const sourceEl = el.querySelector('source');
+    const src = el.currentSrc || el.getAttribute('src') || (sourceEl ? sourceEl.src : '');
+
+    return {
+      kind:        tag,
+      src,
+      currentTime: el.currentTime,
+      duration:    isFinite(el.duration) ? el.duration : 0,
+      paused:      el.paused,
+      muted:       el.muted,
+      volume:      el.volume,
+      loop:        el.loop,
+    };
+  }
+
+  // ── Semantic frame capture ─────────────────────────────────────────────────
+  /**
+   * Capture the visible semantic content of #sourceSurface.
+   * Returns a semantic-frame-v1 object.
+   */
+  function captureSemanticFrame() {
+    const t0      = performance.now();
+    const surface = document.getElementById('sourceSurface');
+    const surfaceRect = surface.getBoundingClientRect();
+
+    const selector  = 'a,button,input,select,textarea,video,audio,h1,h2,h3,p,label,article,section';
+    const candidates = surface.querySelectorAll(selector);
+
+    state.current.clear();
+    const elements = [];
+
+    for (const el of candidates) {
+      const domRect = el.getBoundingClientRect();
+
+      // Skip elements with no visible size
+      if (domRect.width === 0 || domRect.height === 0) continue;
+
+      const tag         = el.tagName.toLowerCase();
+      const id          = stableId(el);
+      const role        = roleOf(el);
+      const interactive = ['button', 'link', 'checkbox', 'textbox', 'combobox'].includes(role);
+      const disabled    = el.disabled === true || el.hasAttribute('disabled');
+      const text        = (el.innerText || '').trim().slice(0, 200);
+      const media       = mediaMeta(el);
+
+      state.current.set(id, el);
+
+      const entry = {
+        id,
+        tag,
+        role,
+        text,
+        path:        cssPath(el),
+        interactive,
+        disabled,
+        rect: {
+          x:      Math.round(domRect.left   - surfaceRect.left),
+          y:      Math.round(domRect.top    - surfaceRect.top),
+          width:  Math.round(domRect.width),
+          height: Math.round(domRect.height),
+        },
+      };
+
+      if (media) entry.media = media;
+      elements.push(entry);
+    }
+
+    const captureMs = parseFloat((performance.now() - t0).toFixed(2));
+
+    const frame = {
+      schema:     'semantic-frame-v1',
+      sequence:   state.sequence,
+      capturedAt: Date.now(),
+      captureMs,
+      viewport: {
+        width:   Math.round(surfaceRect.width),
+        height:  Math.round(surfaceRect.height),
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+      },
+      elements,
+    };
+
+    // Measure payload size after construction
+    frame.payloadBytes = new TextEncoder().encode(JSON.stringify(frame)).length;
+
+    return frame;
+  }
+
+  // ── Frame validation ───────────────────────────────────────────────────────
+  /**
+   * Lightweight runtime sanity check for a semantic frame.
+   * Throws a descriptive Error if the frame is malformed.
+   */
+  function validateFrame(frame) {
+    if (!frame || typeof frame !== 'object') {
+      throw new Error('Frame must be an object');
+    }
+    if (frame.schema !== 'semantic-frame-v1') {
+      throw new Error(`Unknown schema: ${frame.schema}`);
+    }
+    if (
+      !frame.viewport ||
+      typeof frame.viewport.width  !== 'number' ||
+      typeof frame.viewport.height !== 'number'
+    ) {
+      throw new Error('Frame viewport missing or invalid');
+    }
+    if (!Array.isArray(frame.elements)) {
+      throw new Error('Frame elements must be an array');
+    }
+    for (const el of frame.elements) {
+      if (!el.id || !el.role || !el.rect) {
+        throw new Error(`Element missing required field: id=${el.id} role=${el.role}`);
+      }
+    }
+    return true;
+  }
+
+  // ── Stats update ───────────────────────────────────────────────────────────
+  function updateStats(frame, changed) {
+    const interactive = frame.elements.filter((e) => e.interactive && !e.disabled).length;
+    statElements.textContent    = frame.elements.length;
+    statInteractive.textContent = interactive;
+    statCapture.textContent     = frame.captureMs + ' ms';
+    statChanged.textContent     = changed !== null ? changed : '—';
+    statPayload.textContent     = frame.payloadBytes + ' B';
+    statSent.textContent        = state.framesSent;
+    statReceived.textContent    = state.framesReceived;
+  }
+
+  // ── Wire inspector ─────────────────────────────────────────────────────────
+  function showWire(frame) {
+    wireContent.textContent = JSON.stringify(frame, null, 2);
+  }
+
+  // ── Send frame (source side) ───────────────────────────────────────────────
+  /**
+   * Full source-side send cycle:
+   *  1. Early-exit when mode is Receiver.
+   *  2. Capture a semantic frame.
+   *  3. Validate it.
+   *  4. Count changed elements vs the previous frame.
+   *  5. Update local state / stats / wire inspector.
+   *  6. Render locally for preview.
+   *  7. Send over WebSocket if open.
+   */
+  function sendFrame() {
+    if (modeSelect.value === 'receiver') return;
+
+    const frame = captureSemanticFrame();
+    validateFrame(frame);
+
+    // Count changed elements compared with the previous frame
+    let changed = 0;
+    for (const el of frame.elements) {
+      const serialised = JSON.stringify(el);
+      if (state.previousElements.get(el.id) !== serialised) {
+        changed++;
+        state.previousElements.set(el.id, serialised);
+      }
+    }
+
+    state.lastFrame = frame;
+    state.sequence++;
+    state.framesSent++;
+
+    showWire(frame);
+    updateStats(frame, changed);
+    renderFrame(frame);
+
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ type: 'semantic-frame', frame }));
+    } else {
+      console.log('[SemBro] Capture local only — WebSocket not connected');
+    }
+  }
+
+  // ── Receiver renderer ──────────────────────────────────────────────────────
+  /**
+   * Render a semantic frame as an approximate thin-client UI in the
+   * receiver stage.  All elements are positioned absolutely using the
+   * coordinates from the frame, scaled to fit the available stage.
+   */
+  function renderFrame(frame) {
+    const stage     = receiverStage;
+    const stageRect = stage.getBoundingClientRect();
+
+    // Scale the remote viewport down so it fits in the available stage area
+    const scaleX = frame.viewport.width  > 0 ? stageRect.width  / frame.viewport.width  : 1;
+    const scaleY = frame.viewport.height > 0 ? stageRect.height / frame.viewport.height : 1;
+    const scale  = Math.min(scaleX, scaleY, 1);
+
+    // Clear old content
+    while (stage.firstChild) stage.removeChild(stage.firstChild);
+
+    const canvas = document.createElement('div');
+    canvas.className  = 'receiver-canvas';
+    canvas.style.width     = frame.viewport.width  + 'px';
+    canvas.style.height    = frame.viewport.height + 'px';
+    canvas.style.transform = `scale(${scale})`;
+
+    for (const el of frame.elements) {
+      const node = document.createElement('div');
+      node.className      = 'rx-el';
+      node.style.left     = el.rect.x      + 'px';
+      node.style.top      = el.rect.y      + 'px';
+      node.style.width    = el.rect.width  + 'px';
+      node.style.height   = el.rect.height + 'px';
+
+      if (el.role === 'video' && el.media) {
+        const vid     = document.createElement('video');
+        vid.controls  = true;
+        if (el.media.src) vid.src = el.media.src;
+        vid.muted     = el.media.muted;
+        vid.loop      = el.media.loop;
+        vid.style.width  = '100%';
+        vid.style.height = '100%';
+        node.appendChild(vid);
+      } else if (el.role === 'audio' && el.media) {
+        const aud     = document.createElement('audio');
+        aud.controls  = true;
+        if (el.media.src) aud.src = el.media.src;
+        aud.style.width = '100%';
+        node.appendChild(aud);
+      } else {
+        const roleSpan = document.createElement('span');
+        roleSpan.className   = 'rx-role';
+        roleSpan.textContent = el.role;
+        node.appendChild(roleSpan);
+
+        if (el.text) {
+          const textSpan = document.createElement('span');
+          textSpan.className   = 'rx-text';
+          textSpan.textContent = el.text.slice(0, 60);
+          node.appendChild(textSpan);
+        }
+      }
+
+      // Remote activation — send an `activate` packet to the source
+      node.addEventListener('click', () => {
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+          state.ws.send(JSON.stringify({ type: 'activate', targetId: el.id }));
+        }
+      });
+
+      canvas.appendChild(node);
+    }
+
+    stage.appendChild(canvas);
+  }
+
+  // ── WebSocket connection ───────────────────────────────────────────────────
+  function connect() {
+    if (state.ws) {
+      state.ws.close();
+      state.ws = null;
+    }
+
+    const ws = new WebSocket(`ws://${location.host}/ws`);
+    state.ws = ws;
+
+    ws.addEventListener('open', () => {
+      statusDot.classList.add('connected');
+      statusDot.title  = 'WebSocket connected';
+      connectBtn.textContent = 'Disconnect';
+
+      const channel = channelInput.value.trim() || 'semantic-lab';
+      ws.send(JSON.stringify({ type: 'join', channel }));
+    });
+
+    ws.addEventListener('message', (ev) => {
+      let packet;
+      try { packet = JSON.parse(ev.data); } catch (_) { return; }
+
+      switch (packet.type) {
+        case 'hello':
+          // Update our node ID to the server-assigned one
+          state.nodeId = packet.id || state.nodeId;
+          break;
+
+        case 'joined':
+          console.log('[SemBro] Joined channel', packet.channel, 'as', packet.id);
+          break;
+
+        case 'semantic-frame':
+          // Receivers (and Both) render incoming frames; pure Source mode ignores them
+          if (modeSelect.value !== 'source') {
+            state.framesReceived++;
+            state.lastFrame = packet.frame;
+            showWire(packet.frame);
+            updateStats(packet.frame, null);
+            renderFrame(packet.frame);
+          }
+          break;
+
+        case 'activate':
+          // Sources (and Both) respond to activation requests from receivers
+          if (modeSelect.value !== 'receiver') {
+            const target = state.current.get(packet.targetId);
+            if (target) {
+              target.click();
+              // Re-send a fresh frame shortly after the DOM mutation settles
+              setTimeout(sendFrame, 80);
+            }
+          }
+          break;
+      }
+    });
+
+    ws.addEventListener('close', () => {
+      statusDot.classList.remove('connected');
+      statusDot.title  = 'WebSocket disconnected';
+      connectBtn.textContent = 'Connect';
+      state.ws = null;
+    });
+
+    ws.addEventListener('error', () => ws.close());
+  }
+
+  function disconnect() {
+    if (state.ws) {
+      state.ws.close();
+      state.ws = null;
+    }
+  }
+
+  // ── Control event listeners ────────────────────────────────────────────────
+  connectBtn.addEventListener('click', () => {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      disconnect();
+    } else {
+      connect();
+    }
+  });
+
+  captureBtn.addEventListener('click', sendFrame);
+
+  autoBtn.addEventListener('click', () => {
+    if (state.autoTimer) {
+      clearInterval(state.autoTimer);
+      state.autoTimer = null;
+      autoBtn.textContent = 'Auto off';
+      autoBtn.classList.remove('active');
+    } else {
+      state.autoTimer = setInterval(sendFrame, 1000);
+      autoBtn.textContent = 'Auto on';
+      autoBtn.classList.add('active');
+    }
+  });
+
+  modeSelect.addEventListener('change', () => {
+    // In Receiver mode the source surface is not needed
+    document.getElementById('sourcePane').style.display =
+      modeSelect.value === 'receiver' ? 'none' : '';
+    // Receiver pane is always visible
+  });
+</script>
+</body>
+</html>
