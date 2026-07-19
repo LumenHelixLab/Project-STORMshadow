@@ -15,31 +15,32 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .filter(Boolean);
 
 // Content-Security-Policy for the static file server.
-const CSP_HEADER = process.env.CSP ||
+const CSP_HEADER =
+  process.env.CSP ||
   "default-src 'self'; " +
-  "connect-src 'self' ws: wss:; " +
-  "img-src 'self' data: blob:; " +
-  "media-src 'self' https:; " +
-  "script-src 'self'; " +
-  "style-src 'self' 'unsafe-inline'; " +
-  "frame-ancestors 'none'; " +
-  "base-uri 'self';";
+    "connect-src 'self' ws: wss:; " +
+    "img-src 'self' data: blob:; " +
+    "media-src 'self' https:; " +
+    "script-src 'self'; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "frame-ancestors 'none'; " +
+    "base-uri 'self';";
 
 // Resolved base directories used to prevent path-traversal in the file server.
-const STATIC_ROOT   = path.resolve(__dirname, 'public');
+const STATIC_ROOT = path.resolve(__dirname, 'public');
 const PROTOCOL_ROOT = path.resolve(__dirname, 'protocol');
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
-  '.js':   'text/javascript; charset=utf-8',
-  '.css':  'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
-  '.svg':  'image/svg+xml',
-  '.mp4':  'video/mp4',
+  '.svg': 'image/svg+xml',
+  '.mp4': 'video/mp4',
   '.webm': 'video/webm',
-  '.mp3':  'audio/mpeg',
-  '.ogg':  'audio/ogg',
-  '.wav':  'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
 };
 
 const CACHE_MAX_AGE = 60; // seconds for static assets
@@ -75,12 +76,31 @@ function isUnderRateLimit(ip) {
 
 /** Zero-dependency structured logger. */
 const logger = {
-  info:  (msg, meta) => console.log(JSON.stringify(Object.assign({ level: 'info', msg, time: new Date().toISOString() }, meta || {}))),
-  warn:  (msg, meta) => console.warn(JSON.stringify(Object.assign({ level: 'warn', msg, time: new Date().toISOString() }, meta || {}))),
-  error: (msg, meta) => console.error(JSON.stringify(Object.assign({ level: 'error', msg, time: new Date().toISOString() }, meta || {}))),
+  info: (msg, meta) =>
+    console.log(
+      JSON.stringify(
+        Object.assign({ level: 'info', msg, time: new Date().toISOString() }, meta || {}),
+      ),
+    ),
+  warn: (msg, meta) =>
+    console.warn(
+      JSON.stringify(
+        Object.assign({ level: 'warn', msg, time: new Date().toISOString() }, meta || {}),
+      ),
+    ),
+  error: (msg, meta) =>
+    console.error(
+      JSON.stringify(
+        Object.assign({ level: 'error', msg, time: new Date().toISOString() }, meta || {}),
+      ),
+    ),
   debug: (msg, meta) => {
     if (process.env.DEBUG) {
-      console.debug(JSON.stringify(Object.assign({ level: 'debug', msg, time: new Date().toISOString() }, meta || {})));
+      console.debug(
+        JSON.stringify(
+          Object.assign({ level: 'debug', msg, time: new Date().toISOString() }, meta || {}),
+        ),
+      );
     }
   },
 };
@@ -129,7 +149,7 @@ function encodeFrame(payload) {
     header = Buffer.alloc(10);
     header[0] = 0x81;
     header[1] = 127;
-    header.writeUInt32BE(0, 2);   // high 32 bits (zero for payloads < 4 GB)
+    header.writeUInt32BE(0, 2); // high 32 bits (zero for payloads < 4 GB)
     header.writeUInt32BE(len, 6); // low  32 bits
   }
 
@@ -151,12 +171,12 @@ function decodeFrames(buffer, maxPayloadBytes) {
   let remaining = buffer;
 
   while (remaining.length >= 2) {
-    const firstByte  = remaining[0];
+    const firstByte = remaining[0];
     const secondByte = remaining[1];
-    const opcode     = firstByte & 0x0f;
-    const masked     = (secondByte & 0x80) !== 0;
-    let payloadLen   = secondByte & 0x7f;
-    let offset       = 2;
+    const opcode = firstByte & 0x0f;
+    const masked = (secondByte & 0x80) !== 0;
+    let payloadLen = secondByte & 0x7f;
+    let offset = 2;
 
     if (payloadLen === 126) {
       if (remaining.length < 4) break;
@@ -254,13 +274,13 @@ function handleUpgrade(req, socket) {
 
   socket.write(
     'HTTP/1.1 101 Switching Protocols\r\n' +
-    'Upgrade: websocket\r\n' +
-    'Connection: Upgrade\r\n' +
-    `Sec-WebSocket-Accept: ${acceptKey}\r\n` +
-    '\r\n',
+      'Upgrade: websocket\r\n' +
+      'Connection: Upgrade\r\n' +
+      `Sec-WebSocket-Accept: ${acceptKey}\r\n` +
+      '\r\n',
   );
 
-  const id   = randomNodeId();
+  const id = randomNodeId();
   const meta = { id, channel: 'semantic-lab', ip };
   clients.set(socket, meta);
 
@@ -276,7 +296,11 @@ function handleUpgrade(req, socket) {
       logger.warn('WebSocket rate limit exceeded', { id, ip });
       sendToSocket(socket, { type: 'error', reason: 'rate_limited' });
       clients.delete(socket);
-      try { socket.write(Buffer.from([0x88, 0x00])); } catch (_) {}
+      try {
+        socket.write(Buffer.from([0x88, 0x00]));
+      } catch {
+        /* socket may already be closed */
+      }
       socket.destroy();
       return;
     }
@@ -288,7 +312,11 @@ function handleUpgrade(req, socket) {
       logger.warn('WebSocket payload too large', { id, ip });
       sendToSocket(socket, { type: 'error', reason: 'payload_too_large' });
       clients.delete(socket);
-      try { socket.write(Buffer.from([0x88, 0x00])); } catch (_) {}
+      try {
+        socket.write(Buffer.from([0x88, 0x00]));
+      } catch {
+        /* socket may already be closed */
+      }
       socket.destroy();
       return;
     }
@@ -300,7 +328,11 @@ function handleUpgrade(req, socket) {
       clients.delete(socket);
       // Best-effort: send the RFC 6455 close acknowledgement frame.
       // The write may fail if the peer already closed the TCP connection, which is safe to ignore.
-      try { socket.write(Buffer.from([0x88, 0x00])); } catch (_) {}
+      try {
+        socket.write(Buffer.from([0x88, 0x00]));
+      } catch {
+        /* socket may already be closed */
+      }
       socket.destroy();
       return;
     }
@@ -310,28 +342,33 @@ function handleUpgrade(req, socket) {
 
       if (msg.type === 'join') {
         // Client selects a relay channel
-        const requested = (typeof msg.channel === 'string' && msg.channel.trim())
-          ? msg.channel.trim()
-          : 'semantic-lab';
+        const requested =
+          typeof msg.channel === 'string' && msg.channel.trim()
+            ? msg.channel.trim()
+            : 'semantic-lab';
         logger.info('client joined channel', { id, from: meta.channel, to: requested, ip });
         meta.channel = requested;
         meta.protocolVersion = msg.protocolVersion || 'v1';
         sendToSocket(socket, {
-          type:    'joined',
+          type: 'joined',
           channel: meta.channel,
-          id:      meta.id,
+          id: meta.id,
           protocolVersion: meta.protocolVersion,
-          at:      Date.now(),
+          at: Date.now(),
         });
       } else if (msg.type === 'permission-request' || msg.type === 'permission-response') {
         // Relay permission messages only to the intended target node on the same channel
         const outgoing = Object.assign({}, msg, {
           sourceNodeId: meta.id,
-          channel:      meta.channel,
-          relayedAt:    Date.now(),
+          channel: meta.channel,
+          relayedAt: Date.now(),
         });
         for (const [peer, peerMeta] of clients) {
-          if (peer !== socket && peerMeta.channel === meta.channel && peerMeta.id === msg.targetNodeId) {
+          if (
+            peer !== socket &&
+            peerMeta.channel === meta.channel &&
+            peerMeta.id === msg.targetNodeId
+          ) {
             sendToSocket(peer, outgoing);
           }
         }
@@ -339,8 +376,8 @@ function handleUpgrade(req, socket) {
         // Relay all other packets to every peer on the same channel
         const outgoing = Object.assign({}, msg, {
           sourceNodeId: meta.id,
-          channel:      meta.channel,
-          relayedAt:    Date.now(),
+          channel: meta.channel,
+          relayedAt: Date.now(),
         });
         for (const [peer, peerMeta] of clients) {
           if (peer !== socket && peerMeta.channel === meta.channel) {
@@ -376,12 +413,12 @@ function handleUpgrade(req, socket) {
  */
 function serveMetadata(filePath, res, contentType, stats, method) {
   const headers = {
-    'Content-Type':   contentType,
+    'Content-Type': contentType,
     'Content-Length': stats.size.toString(),
-    'Cache-Control':  `public, max-age=${CACHE_MAX_AGE}`,
-    'Accept-Ranges':  'bytes',
-    'Last-Modified':  stats.mtime.toUTCString(),
-    'ETag':           `"${stats.mtime.getTime().toString(36)}-${stats.size.toString(36)}"`,
+    'Cache-Control': `public, max-age=${CACHE_MAX_AGE}`,
+    'Accept-Ranges': 'bytes',
+    'Last-Modified': stats.mtime.toUTCString(),
+    ETag: `"${stats.mtime.getTime().toString(36)}-${stats.size.toString(36)}"`,
   };
   res.writeHead(200, headers);
   if (method === 'HEAD') res.end();
@@ -417,16 +454,16 @@ const server = http.createServer((req, res) => {
 
   if (method === 'OPTIONS') {
     res.writeHead(204, {
-      'Access-Control-Allow-Origin':  '*',
+      'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-      'Access-Control-Max-Age':       '86400',
+      'Access-Control-Max-Age': '86400',
     });
     res.end();
     return;
   }
 
   if (method !== 'GET' && method !== 'HEAD') {
-    res.writeHead(405, { 'Content-Type': 'text/plain', 'Allow': 'GET, HEAD, OPTIONS' });
+    res.writeHead(405, { 'Content-Type': 'text/plain', Allow: 'GET, HEAD, OPTIONS' });
     res.end('Method not allowed');
     return;
   }
@@ -465,7 +502,7 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  const ext         = path.extname(filePath);
+  const ext = path.extname(filePath);
   const contentType = MIME_TYPES[ext] || 'application/octet-stream';
 
   fs.stat(filePath, (err, stats) => {
@@ -485,17 +522,17 @@ const server = http.createServer((req, res) => {
       }
 
       const headers = {
-        'Content-Type':                   contentType,
-        'Content-Length':                 stats.size.toString(),
-        'Cache-Control':                  `public, max-age=${CACHE_MAX_AGE}`,
-        'Accept-Ranges':                  'bytes',
-        'Last-Modified':                  stats.mtime.toUTCString(),
-        'ETag':                           `"${stats.mtime.getTime().toString(36)}-${stats.size.toString(36)}"`,
-        'Content-Security-Policy':        CSP_HEADER,
-        'X-Content-Type-Options':         'nosniff',
-        'X-Frame-Options':                'DENY',
-        'Referrer-Policy':                'strict-origin-when-cross-origin',
-        'Permissions-Policy':             'camera=(), microphone=(), geolocation=()',
+        'Content-Type': contentType,
+        'Content-Length': stats.size.toString(),
+        'Cache-Control': `public, max-age=${CACHE_MAX_AGE}`,
+        'Accept-Ranges': 'bytes',
+        'Last-Modified': stats.mtime.toUTCString(),
+        ETag: `"${stats.mtime.getTime().toString(36)}-${stats.size.toString(36)}"`,
+        'Content-Security-Policy': CSP_HEADER,
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
+        'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
       };
       res.writeHead(200, headers);
       const stream = fs.createReadStream(filePath);
@@ -510,11 +547,11 @@ const server = http.createServer((req, res) => {
 
     // Partial content (Range request)
     const headers = {
-      'Content-Type':   contentType,
+      'Content-Type': contentType,
       'Content-Length': range.length.toString(),
-      'Content-Range':  `bytes ${range.start}-${range.end}/${stats.size}`,
-      'Cache-Control':  `public, max-age=${CACHE_MAX_AGE}`,
-      'Accept-Ranges':  'bytes',
+      'Content-Range': `bytes ${range.start}-${range.end}/${stats.size}`,
+      'Cache-Control': `public, max-age=${CACHE_MAX_AGE}`,
+      'Accept-Ranges': 'bytes',
     };
     res.writeHead(206, headers);
     const stream = fs.createReadStream(filePath, { start: range.start, end: range.end });

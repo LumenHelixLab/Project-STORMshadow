@@ -103,7 +103,10 @@ describe('websocket relay', () => {
   function wsHandshake() {
     return new Promise((resolve, reject) => {
       const key = crypto.randomBytes(16).toString('base64');
-      const accept = crypto.createHash('sha1').update(key + WS_GUID).digest('base64');
+      const accept = crypto
+        .createHash('sha1')
+        .update(key + WS_GUID)
+        .digest('base64');
       const socket = net.connect(server.address().port, '127.0.0.1');
       let settled = false;
       const finish = (value, error) => {
@@ -118,12 +121,12 @@ describe('websocket relay', () => {
       socket.on('connect', () => {
         socket.write(
           'GET /ws HTTP/1.1\r\n' +
-          'Host: 127.0.0.1\r\n' +
-          'Upgrade: websocket\r\n' +
-          'Connection: Upgrade\r\n' +
-          `Sec-WebSocket-Key: ${key}\r\n` +
-          'Sec-WebSocket-Version: 13\r\n' +
-          '\r\n',
+            'Host: 127.0.0.1\r\n' +
+            'Upgrade: websocket\r\n' +
+            'Connection: Upgrade\r\n' +
+            `Sec-WebSocket-Key: ${key}\r\n` +
+            'Sec-WebSocket-Version: 13\r\n' +
+            '\r\n',
         );
       });
       let buf = Buffer.alloc(0);
@@ -216,7 +219,11 @@ describe('websocket relay', () => {
             payload = out;
           }
           if (opcode === 0x1) {
-            try { messages.push(JSON.parse(payload.toString('utf8'))); } catch (_) {}
+            try {
+              messages.push(JSON.parse(payload.toString('utf8')));
+            } catch {
+              /* ignore malformed JSON frames */
+            }
           }
           buf = buf.slice(total);
         }
