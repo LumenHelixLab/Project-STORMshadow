@@ -518,7 +518,10 @@
     autoTimer:        null,
     seen:             new WeakMap(),   // DOM element → stable id string
     current:          new Map(),       // stable id → live DOM element
-    nextId:           1
+    nextId:           1,
+    protocolVersion:  'v2',
+    keyFrameEvery:    10,              // Send a full key frame every N frames
+    mutationObserver: null
   };
 
   // ── DOM refs ───────────────────────────────────────────────────────────────
@@ -538,6 +541,12 @@
   const statPayload     = document.getElementById('statPayload');
   const statSent        = document.getElementById('statSent');
   const statReceived    = document.getElementById('statReceived');
+
+  // Receiver-side state for incremental/delta rendering
+  const rxState = {
+    elements: new Map(),
+    viewport: { width: 0, height: 0, scrollX: 0, scrollY: 0 },
+  };
 
   // Delay in ms between a remote activation click and the follow-up capture,
   // giving the DOM time to settle after the click handler has run.
@@ -661,7 +670,7 @@
   // ── Semantic frame capture ─────────────────────────────────────────────────
   /**
    * Capture the visible semantic content of #sourceSurface.
-   * Returns a semantic-frame-v1 object.
+   * Returns a semantic-frame-v2 object (key frame).
    */
   function captureSemanticFrame() {
     const t0      = performance.now();
@@ -712,24 +721,36 @@
 
     const captureMs = parseFloat((performance.now() - t0).toFixed(2));
 
-    const frame = {
-      schema:     'semantic-frame-v1',
-      sequence:   state.sequence,
-      capturedAt: Date.now(),
-      captureMs,
-      viewport: {
-        width:   Math.round(surfaceRect.width),
-        height:  Math.round(surfaceRect.height),
-        scrollX: window.scrollX,
-        scrollY: window.scrollY,
-      },
-      elements,
+    const viewport = {
+      width:   Math.round(surfaceRect.width),
+      height:  Math.round(surfaceRect.height),
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
     };
 
-    // Measure payload size after construction
-    frame.payloadBytes = new TextEncoder().encode(JSON.stringify(frame)).length;
+    return buildFrame('key', elements, [], viewport, captureMs);
+  }
 
-    return frame;
+  /**
+   * Build a semantic-frame-v2 payload with a SHA-256 checksum.
+   */
+  async function buildFrame(frameType, elements, removedIds, viewport, captureMs) {
+    const base = {
+      schema:      'semantic-frame-v2',
+      sequence:    state.sequence,
+      frameType,
+      capturedAt:  Date.now(),
+      captureMs,
+      viewport,
+      elements,
+      removedIds,
+    };
+    const payloadBytes = new TextEncoder().encode(JSON.stringify(base)).length;
+    base.payloadBytes = payloadBytes;
+    const checksumInput = JSON.stringify(base);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(checksumInput));
+    base.checksum = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    return base;
   }
 
   // ── Frame validation ───────────────────────────────────────────────────────
@@ -737,12 +758,15 @@
    * Lightweight runtime sanity check for a semantic frame.
    * Throws a descriptive Error if the frame is malformed.
    */
-  function validateFrame(frame) {
+  async function validateFrame(frame) {
     if (!frame || typeof frame !== 'object') {
       throw new Error('Frame must be an object');
     }
-    if (frame.schema !== 'semantic-frame-v1') {
+    if (frame.schema !== 'semantic-frame-v2') {
       throw new Error(`Unknown schema: ${frame.schema}`);
+    }
+    if (!['key', 'delta'].includes(frame.frameType)) {
+      throw new Error(`Unknown frameType: ${frame.frameType}`);
     }
     if (
       !frame.viewport ||
@@ -754,10 +778,26 @@
     if (!Array.isArray(frame.elements)) {
       throw new Error('Frame elements must be an array');
     }
+    if (!Array.isArray(frame.removedIds)) {
+      throw new Error('Frame removedIds must be an array');
+    }
+    if (typeof frame.checksum !== 'string' || frame.checksum.length !== 64) {
+      throw new Error('Frame checksum missing or invalid');
+    }
     for (const el of frame.elements) {
       if (!el.id || !el.role || !el.rect) {
         throw new Error(`Element missing required field: id=${el.id} role=${el.role}`);
       }
+    }
+
+    // Verify checksum
+    const copy = Object.assign({}, frame);
+    delete copy.checksum;
+    const input = JSON.stringify(copy);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+    const expected = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    if (expected !== frame.checksum) {
+      throw new Error('Frame checksum mismatch');
     }
     return true;
   }
@@ -779,31 +819,76 @@
     wireContent.textContent = JSON.stringify(frame, null, 2);
   }
 
+  // ── Delta computation ──────────────────────────────────────────────────────
+  /**
+   * Compare the captured full element set with the previous frame and produce a
+   * delta frame when appropriate. A full key frame is sent every keyFrameEvery
+   * frames or when the receiver has no prior state.
+   */
+  async function computeDeltaFrame(fullFrame) {
+    const isKey =
+      state.sequence % state.keyFrameEvery === 1 ||
+      state.previousElements.size === 0;
+
+    if (isKey) {
+      return { frame: fullFrame, changed: fullFrame.elements.length };
+    }
+
+    const changed = [];
+    for (const el of fullFrame.elements) {
+      const serialised = JSON.stringify(el);
+      if (state.previousElements.get(el.id) !== serialised) {
+        changed.push(el);
+      }
+    }
+
+    const currentIds = new Set(fullFrame.elements.map((e) => e.id));
+    const removedIds = [];
+    for (const id of state.previousElements.keys()) {
+      if (!currentIds.has(id)) removedIds.push(id);
+    }
+
+    if (changed.length === 0 && removedIds.length === 0) {
+      return null;
+    }
+
+    const delta = await buildFrame(
+      'delta',
+      changed,
+      removedIds,
+      fullFrame.viewport,
+      fullFrame.captureMs,
+    );
+    return { frame: delta, changed: changed.length };
+  }
+
   // ── Send frame (source side) ───────────────────────────────────────────────
   /**
    * Full source-side send cycle:
    *  1. Early-exit when mode is Receiver.
    *  2. Capture a semantic frame.
-   *  3. Validate it.
-   *  4. Count changed elements vs the previous frame.
+   *  3. Compute delta / key frame.
+   *  4. Validate it.
    *  5. Update local state / stats / wire inspector.
    *  6. Render locally for preview.
    *  7. Send over WebSocket if open.
    */
-  function sendFrame() {
+  async function sendFrame() {
     if (modeSelect.value === 'receiver') return;
 
-    const frame = captureSemanticFrame();
-    validateFrame(frame);
+    const fullFrame = captureSemanticFrame();
+    const computed  = await computeDeltaFrame(fullFrame);
+    if (!computed) return;
 
-    // Count changed elements compared with the previous frame
-    let changed = 0;
-    for (const el of frame.elements) {
-      const serialised = JSON.stringify(el);
-      if (state.previousElements.get(el.id) !== serialised) {
-        changed++;
-        state.previousElements.set(el.id, serialised);
-      }
+    const { frame, changed } = computed;
+    await validateFrame(frame);
+
+    // Refresh previous element serialisations
+    for (const el of fullFrame.elements) {
+      state.previousElements.set(el.id, JSON.stringify(el));
+    }
+    for (const id of frame.removedIds) {
+      state.previousElements.delete(id);
     }
 
     state.lastFrame = frame;
@@ -826,10 +911,21 @@
    * Render a semantic frame as an approximate thin-client UI in the
    * receiver stage.  All elements are positioned absolutely using the
    * coordinates from the frame, scaled to fit the available stage.
+   * Supports both key and delta frames by maintaining an element map.
    */
   function renderFrame(frame) {
     const stage     = receiverStage;
     const stageRect = stage.getBoundingClientRect();
+
+    rxState.viewport = frame.viewport;
+
+    if (frame.frameType === 'key') {
+      rxState.elements.clear();
+      for (const el of frame.elements) rxState.elements.set(el.id, el);
+    } else {
+      for (const el of frame.elements) rxState.elements.set(el.id, el);
+      for (const id of frame.removedIds) rxState.elements.delete(id);
+    }
 
     // Scale the remote viewport down so it fits in the available stage area
     const scaleX = frame.viewport.width  > 0 ? stageRect.width  / frame.viewport.width  : 1;
@@ -845,7 +941,7 @@
     canvas.style.height    = frame.viewport.height + 'px';
     canvas.style.transform = `scale(${scale})`;
 
-    for (const el of frame.elements) {
+    for (const el of rxState.elements.values()) {
       const node = document.createElement('div');
       node.className      = 'rx-el';
       node.style.left     = el.rect.x      + 'px';
@@ -917,7 +1013,7 @@
       connectBtn.textContent = 'Disconnect';
 
       const channel = channelInput.value.trim() || 'semantic-lab';
-      ws.send(JSON.stringify({ type: 'join', channel }));
+      ws.send(JSON.stringify({ type: 'join', channel, protocolVersion: state.protocolVersion }));
     });
 
     ws.addEventListener('message', (ev) => {
@@ -941,11 +1037,16 @@
         case 'semantic-frame':
           // Receivers (and Both) render incoming frames; pure Source mode ignores them
           if (modeSelect.value !== 'source') {
-            state.framesReceived++;
-            state.lastFrame = packet.frame;
-            showWire(packet.frame);
-            updateStats(packet.frame, null);
-            renderFrame(packet.frame);
+            const incoming = packet.frame;
+            validateFrame(incoming).then(() => {
+              state.framesReceived++;
+              state.lastFrame = incoming;
+              showWire(incoming);
+              updateStats(incoming, incoming.frameType === 'delta' ? incoming.elements.length : null);
+              renderFrame(incoming);
+            }).catch((err) => {
+              console.warn('[SemBro] Received invalid semantic frame:', err.message);
+            });
           }
           break;
 
