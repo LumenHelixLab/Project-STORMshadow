@@ -985,6 +985,137 @@
     }
   }
 
+  // ── Input permission state ─────────────────────────────────────────────────
+  const inputPermissions = new Map(); // sourceNodeId -> { approved: boolean, pending: Set() }
+  const pendingRequests = new Map();  // requestId -> { resolve, reject, timer }
+
+  function hasInputPermission(sourceNodeId) {
+    const p = inputPermissions.get(sourceNodeId);
+    return !!p && p.approved;
+  }
+
+  async function requestInputPermission(sourceNodeId) {
+    if (hasInputPermission(sourceNodeId)) return true;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
+
+    const requestId = 'req-' + Math.random().toString(36).slice(2, 10);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingRequests.delete(requestId);
+        resolve(false);
+      }, 10000);
+      pendingRequests.set(requestId, { resolve, reject, timer });
+      state.ws.send(JSON.stringify({
+        type: 'permission-request',
+        requestId,
+        targetNodeId: sourceNodeId,
+        requestedBy: state.nodeId,
+      }));
+    });
+  }
+
+  function handlePermissionRequest(packet) {
+    // Simple auto-approval for demo; production should prompt the source user.
+    const approved = true;
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({
+        type: 'permission-response',
+        requestId: packet.requestId,
+        targetNodeId: packet.requestedBy,
+        approved,
+        respondedBy: state.nodeId,
+      }));
+    }
+  }
+
+  function handlePermissionResponse(packet) {
+    const pending = pendingRequests.get(packet.requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingRequests.delete(packet.requestId);
+    inputPermissions.set(packet.respondedBy, { approved: packet.approved });
+    pending.resolve(packet.approved);
+  }
+
+  // ── Input replay on source side ────────────────────────────────────────────
+  const INPUT_RATE_LIMIT_MS = 50;
+  let lastReplayAt = 0;
+
+  async function replayInputEvent(evt) {
+    if (!evt || typeof evt !== 'object') throw new Error('Invalid input event');
+    const now = performance.now();
+    if (now - lastReplayAt < INPUT_RATE_LIMIT_MS) {
+      throw new Error('Input replay rate limited');
+    }
+    lastReplayAt = now;
+
+    const target = state.current.get(evt.targetId);
+    if (!target) throw new Error('Target element not found');
+    if (target.disabled) throw new Error('Target is disabled');
+
+    const surface = document.getElementById('sourceSurface');
+    if (!surface.contains(target)) throw new Error('Target outside source surface');
+
+    const rect = target.getBoundingClientRect();
+    if (
+      evt.clientX < rect.left || evt.clientX > rect.right ||
+      evt.clientY < rect.top || evt.clientY > rect.bottom
+    ) {
+      throw new Error('Event coordinates outside target bounds');
+    }
+
+    switch (evt.kind) {
+      case 'click':
+        target.click();
+        break;
+      case 'mousemove':
+        // No-op replay; visual cursor is handled separately
+        break;
+      case 'scroll':
+        if (target.scrollTo) target.scrollTo(evt.scrollX, evt.scrollY);
+        break;
+      case 'keydown':
+        if (target.focus) target.focus();
+        if (target.value !== undefined && evt.key.length === 1) {
+          target.value += evt.key;
+        } else if (evt.key === 'Backspace' && target.value) {
+          target.value = target.value.slice(0, -1);
+        } else if (evt.key === 'Enter' && target.tagName === 'BUTTON') {
+          target.click();
+        }
+        break;
+      default:
+        throw new Error(`Unsupported input kind: ${evt.kind}`);
+    }
+
+    setTimeout(sendFrame, ACTIVATE_SETTLE_MS);
+  }
+
+  // ── Remote cursor overlay ──────────────────────────────────────────────────
+  function updateRemoteCursor(nodeId, x, y) {
+    let cursor = document.getElementById('cursor-' + nodeId);
+    if (!cursor) {
+      cursor = document.createElement('div');
+      cursor.id = 'cursor-' + nodeId;
+      cursor.style.position = 'fixed';
+      cursor.style.width = '12px';
+      cursor.style.height = '12px';
+      cursor.style.borderRadius = '50%';
+      cursor.style.background = 'var(--yellow)';
+      cursor.style.pointerEvents = 'none';
+      cursor.style.zIndex = '10000';
+      cursor.style.transition = 'transform 0.05s linear';
+      cursor.title = 'Remote cursor: ' + nodeId;
+      document.body.appendChild(cursor);
+    }
+    cursor.style.transform = `translate(${x}px, ${y}px)`;
+  }
+
+  function removeRemoteCursor(nodeId) {
+    const cursor = document.getElementById('cursor-' + nodeId);
+    if (cursor) cursor.remove();
+  }
+
   // ── Receiver renderer ──────────────────────────────────────────────────────
   /**
    * Render a semantic frame as an approximate thin-client UI in the
@@ -1125,10 +1256,17 @@
           }
         }
         // Remote activation — send an `activate` packet to the source
-        node.addEventListener('click', () => {
-          if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-            state.ws.send(JSON.stringify({ type: 'activate', targetId: el.id }));
+        node.addEventListener('click', async (ev) => {
+          if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+          const sourceNodeId = state.lastFrame && state.lastFrame.sourceNodeId;
+          if (sourceNodeId && !hasInputPermission(sourceNodeId)) {
+            const approved = await requestInputPermission(sourceNodeId);
+            if (!approved) return;
           }
+          state.ws.send(JSON.stringify({ type: 'input-event', event: {
+            kind: 'click', targetId: el.id,
+            clientX: ev.clientX, clientY: ev.clientY,
+          } }));
         });
         interactiveLayer.appendChild(node);
       } else {
@@ -1156,6 +1294,18 @@
     canvas.appendChild(interactiveLayer);
     canvas.appendChild(mediaLayer);
     stage.appendChild(canvas);
+
+    // Forward mouse movements on the stage to the source as input events
+    stage.onmousemove = (ev) => {
+      if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+      const rect = stage.getBoundingClientRect();
+      const scale = frame.viewport.width > 0 ? rect.width / frame.viewport.width : 1;
+      const x = (ev.clientX - rect.left) / scale;
+      const y = (ev.clientY - rect.top) / scale;
+      state.ws.send(JSON.stringify({ type: 'input-event', event: {
+        kind: 'mousemove', x, y,
+      } }));
+    };
   }
 
   // ── WebSocket connection ───────────────────────────────────────────────────
@@ -1220,12 +1370,44 @@
           // Sources (and Both) respond to activation requests from receivers
           if (modeSelect.value !== 'receiver') {
             const target = state.current.get(packet.targetId);
-            if (target) {
+            if (target && !target.disabled) {
               target.click();
               // Wait ACTIVATE_SETTLE_MS before re-capturing to allow the DOM
               // mutation triggered by the click handler to complete.
               setTimeout(sendFrame, ACTIVATE_SETTLE_MS);
             }
+          }
+          break;
+
+        case 'input-event':
+          // Sources (and Both) replay input events from approved receivers
+          if (modeSelect.value !== 'receiver') {
+            if (packet.event && packet.event.kind === 'mousemove') {
+              updateRemoteCursor(packet.sourceNodeId, packet.event.x, packet.event.y);
+            } else {
+              replayInputEvent(packet.event).catch((err) => {
+                console.warn('[SemBro] Input replay failed:', err.message);
+              });
+            }
+          } else {
+            // Receivers render remote cursor movements from other receivers
+            if (packet.event && packet.event.kind === 'mousemove') {
+              updateRemoteCursor(packet.sourceNodeId, packet.event.x, packet.event.y);
+            }
+          }
+          break;
+
+        case 'permission-request':
+          // Receiver asks source for permission to send input events
+          if (modeSelect.value !== 'receiver') {
+            handlePermissionRequest(packet);
+          }
+          break;
+
+        case 'permission-response':
+          // Source replied to our permission request
+          if (modeSelect.value !== 'source') {
+            handlePermissionResponse(packet);
           }
           break;
       }
@@ -1237,6 +1419,10 @@
       connectBtn.textContent = 'Connect';
       state.ws = null;
       stopMutationObserver();
+      inputPermissions.clear();
+      for (const { timer } of pendingRequests.values()) clearTimeout(timer);
+      pendingRequests.clear();
+      document.querySelectorAll('[id^="cursor-"]').forEach((c) => c.remove());
     });
 
     ws.addEventListener('error', () => ws.close());
