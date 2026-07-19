@@ -1,0 +1,191 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "semantic-frame-v1",
+  "title": "Semantic Frame v1",
+  "description": "A structured semantic snapshot of a visible browser viewport. Carries element roles, text, bounds, interaction flags, and media metadata. No pixel data is included.",
+  "type": "object",
+  "required": [
+    "schema",
+    "sequence",
+    "capturedAt",
+    "captureMs",
+    "viewport",
+    "elements",
+    "payloadBytes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "semantic-frame-v1",
+      "description": "Fixed schema identifier. Must be exactly 'semantic-frame-v1'."
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing frame counter, starting at 1 for the first frame sent by a source node."
+    },
+    "capturedAt": {
+      "type": "number",
+      "description": "Unix epoch timestamp in milliseconds when the frame was captured."
+    },
+    "captureMs": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Wall-clock time in milliseconds spent on DOM capture and serialisation."
+    },
+    "viewport": {
+      "$ref": "#/definitions/Viewport"
+    },
+    "elements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/SemanticElement"
+      },
+      "description": "Ordered list of visible semantic elements captured from the source page."
+    },
+    "payloadBytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "UTF-8 byte length of the serialised frame JSON, measured after construction."
+    }
+  },
+  "definitions": {
+    "Viewport": {
+      "type": "object",
+      "required": ["width", "height", "scrollX", "scrollY"],
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Visible viewport width in CSS pixels."
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Visible viewport height in CSS pixels."
+        },
+        "scrollX": {
+          "type": "number",
+          "description": "Horizontal scroll offset in CSS pixels."
+        },
+        "scrollY": {
+          "type": "number",
+          "description": "Vertical scroll offset in CSS pixels."
+        }
+      }
+    },
+    "Rect": {
+      "type": "object",
+      "required": ["x", "y", "width", "height"],
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "type": "number",
+          "description": "Left edge of the element relative to the source surface origin, in CSS pixels."
+        },
+        "y": {
+          "type": "number",
+          "description": "Top edge of the element relative to the source surface origin, in CSS pixels."
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Element width in CSS pixels."
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Element height in CSS pixels."
+        }
+      }
+    },
+    "MediaMeta": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["video", "audio"],
+          "description": "Media element type."
+        },
+        "src": {
+          "type": "string",
+          "description": "Resolved media URL at capture time. May be empty if not yet loaded."
+        },
+        "currentTime": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Playback position in seconds."
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total duration in seconds. 0 if unknown or not yet loaded."
+        },
+        "paused": {
+          "type": "boolean",
+          "description": "True if the media is currently paused."
+        },
+        "muted": {
+          "type": "boolean",
+          "description": "True if the media element is muted."
+        },
+        "volume": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Volume level from 0.0 to 1.0."
+        },
+        "loop": {
+          "type": "boolean",
+          "description": "True if the media element has the loop attribute set."
+        }
+      }
+    },
+    "SemanticElement": {
+      "type": "object",
+      "required": ["id", "tag", "role", "rect"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable element identity. 'id:<domId>' when the element has a DOM id attribute, otherwise 'el-<n>' where n is a session-scoped counter."
+        },
+        "tag": {
+          "type": "string",
+          "description": "Lower-case HTML tag name (e.g. 'button', 'input', 'video')."
+        },
+        "role": {
+          "type": "string",
+          "description": "ARIA-like semantic role. Derived from the role attribute when present, otherwise mapped from the tag name."
+        },
+        "text": {
+          "type": "string",
+          "description": "Trimmed visible text content of the element, truncated to 200 characters."
+        },
+        "path": {
+          "type": "string",
+          "description": "Human-readable CSS selector path relative to the source surface root. For debugging only."
+        },
+        "interactive": {
+          "type": "boolean",
+          "description": "True if the element accepts user input (button, link, checkbox, textbox, combobox)."
+        },
+        "disabled": {
+          "type": "boolean",
+          "description": "True if the element has the disabled attribute or property set."
+        },
+        "rect": {
+          "$ref": "#/definitions/Rect"
+        },
+        "media": {
+          "$ref": "#/definitions/MediaMeta",
+          "description": "Present only for video and audio elements."
+        }
+      }
+    }
+  }
+}
