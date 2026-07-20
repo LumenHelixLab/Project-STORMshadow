@@ -7,7 +7,8 @@ Instead of streaming screenshots or video frames, the source browser captures th
 ## Quick start
 
 ```bash
-node server.js
+npm install
+npm start
 # Server runs at http://localhost:4173
 ```
 
@@ -26,8 +27,9 @@ Both tabs must use the same **Channel** (default: `semantic-lab`). The receiver 
 |------|---------|
 | `server.js` | Static file server + no-dependency WebSocket relay |
 | `public/index.html` | Full browser app: capture engine, receiver renderer, controls, stats, wire inspector |
-| `protocol/semantic-frame-v1.schema.json` | JSON Schema for the `semantic-frame-v1` wire format |
-| `package.json` | Project name and start scripts (no runtime npm dependencies) |
+| `protocol/semantic-frame-v1.schema.json` | JSON Schema for the original `semantic-frame-v1` wire format |
+| `protocol/semantic-frame-v2.schema.json` | JSON Schema for `semantic-frame-v2` with key/delta frames and checksums |
+| `package.json` | Project scripts and dev dependencies (jest, eslint, prettier) |
 
 ## How it works
 
@@ -41,7 +43,23 @@ The core idea: send *meaning*, not pixels.
 - The **server** relays frames between tabs on the same channel with no external WebSocket library.
 - The **receiver** renders absolutely-positioned native elements scaled to fit, including native `<video>` / `<audio>` players for media.
 
-See the problem-statement document for the full architecture description.
+## Implemented milestones
+
+1. **Foundation Hardening** — `HEAD`/`OPTIONS`, `Range`, caching headers, WebSocket rate limiting, structured logging, smoke tests.
+2. **Protocol v2** — key/delta frames, `removedIds`, SHA-256 checksums, protocol version negotiation.
+3. **Capture Engine Upgrade** — `MutationObserver`, computed styles, focus/hover state, semantic grouping.
+4. **Receiver Renderer Upgrade** — layered renderer, quality levels, native controls, reduced-motion support.
+5. **Bi-Directional Input Relay** — click/scroll/keyboard replay, permission handshake, remote cursor.
+6. **Security & Privacy** — optional AES-GCM E2EE, CSP/security headers, origin validation, PII redaction, password omission.
+7. **Tooling** — ESLint, Prettier, Jest tests, protocol v2 tests.
+
+## Development commands
+
+```bash
+npm test       # run Jest tests
+npm run lint   # run ESLint
+npm run format # run Prettier
+```
 
 ## Notes
 

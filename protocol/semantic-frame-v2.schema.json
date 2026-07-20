@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "semantic-frame-v2",
+  "title": "Semantic Frame v2",
+  "description": "A structured semantic snapshot of a visible browser viewport. Supports key frames and delta frames for efficient incremental transport. No pixel data is included.",
+  "type": "object",
+  "required": [
+    "schema",
+    "sequence",
+    "frameType",
+    "capturedAt",
+    "captureMs",
+    "viewport",
+    "elements",
+    "removedIds",
+    "payloadBytes",
+    "checksum"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "semantic-frame-v2",
+      "description": "Fixed schema identifier. Must be exactly 'semantic-frame-v2'."
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing frame counter, starting at 1 for the first frame sent by a source node."
+    },
+    "frameType": {
+      "type": "string",
+      "enum": ["key", "delta"],
+      "description": "key frames contain the full visible element set; delta frames only contain changed elements and removedIds."
+    },
+    "capturedAt": {
+      "type": "number",
+      "description": "Unix epoch timestamp in milliseconds when the frame was captured."
+    },
+    "captureMs": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Wall-clock time in milliseconds spent on DOM capture and serialisation."
+    },
+    "viewport": {
+      "$ref": "#/definitions/Viewport"
+    },
+    "elements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/SemanticElement"
+      },
+      "description": "For key frames this is the complete visible element set. For delta frames only changed/new elements."
+    },
+    "removedIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Element ids that are no longer present in the viewport. Only meaningful for delta frames; should be empty for key frames."
+    },
+    "payloadBytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "UTF-8 byte length of the serialised frame JSON, measured after construction."
+    },
+    "checksum": {
+      "type": "string",
+      "description": "Hex-encoded SHA-256 checksum of the canonical frame JSON string before the checksum field is added."
+    }
+  },
+  "definitions": {
+    "Viewport": {
+      "type": "object",
+      "required": ["width", "height", "scrollX", "scrollY"],
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Visible viewport width in CSS pixels."
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Visible viewport height in CSS pixels."
+        },
+        "scrollX": {
+          "type": "number",
+          "description": "Horizontal scroll offset in CSS pixels."
+        },
+        "scrollY": {
+          "type": "number",
+          "description": "Vertical scroll offset in CSS pixels."
+        }
+      }
+    },
+    "Rect": {
+      "type": "object",
+      "required": ["x", "y", "width", "height"],
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "type": "number",
+          "description": "Left edge of the element relative to the source surface origin, in CSS pixels."
+        },
+        "y": {
+          "type": "number",
+          "description": "Top edge of the element relative to the source surface origin, in CSS pixels."
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Element width in CSS pixels."
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Element height in CSS pixels."
+        }
+      }
+    },
+    "MediaMeta": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["video", "audio"],
+          "description": "Media element type."
+        },
+        "src": {
+          "type": "string",
+          "description": "Resolved media URL at capture time. May be empty if not yet loaded."
+        },
+        "currentTime": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Playback position in seconds."
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total duration in seconds. 0 if unknown or not yet loaded."
+        },
+        "paused": {
+          "type": "boolean",
+          "description": "True if the media is currently paused."
+        },
+        "muted": {
+          "type": "boolean",
+          "description": "True if the media element is muted."
+        },
+        "volume": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Volume level from 0.0 to 1.0."
+        },
+        "loop": {
+          "type": "boolean",
+          "description": "True if the media element has the loop attribute set."
+        }
+      }
+    },
+    "SemanticElement": {
+      "type": "object",
+      "required": ["id", "tag", "role", "rect"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable element identity. 'id:<domId>' when the element has a DOM id attribute, otherwise 'el-<n>' where n is a session-scoped counter."
+        },
+        "tag": {
+          "type": "string",
+          "description": "Lower-case HTML tag name (e.g. 'button', 'input', 'video')."
+        },
+        "role": {
+          "type": "string",
+          "description": "ARIA-like semantic role. Derived from the role attribute when present, otherwise mapped from the tag name."
+        },
+        "text": {
+          "type": "string",
+          "description": "Trimmed visible text content of the element, truncated to 200 characters."
+        },
+        "path": {
+          "type": "string",
+          "description": "Human-readable CSS selector path relative to the source surface root. For debugging only."
+        },
+        "interactive": {
+          "type": "boolean",
+          "description": "True if the element accepts user input (button, link, checkbox, textbox, combobox)."
+        },
+        "disabled": {
+          "type": "boolean",
+          "description": "True if the element has the disabled attribute or property set."
+        },
+        "rect": {
+          "$ref": "#/definitions/Rect"
+        },
+        "media": {
+          "$ref": "#/definitions/MediaMeta",
+          "description": "Present only for video and audio elements."
+        }
+      }
+    }
+  }
+}
